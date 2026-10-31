@@ -36,6 +36,8 @@ class Emby(Media):
             if self._block_devices is None:
                 self._block_devices = []
             self._repeat_filter_timeout = config.get("RepeatFilterTimeout", 120)
+            self._mark_watched_on_start = config.get("MarkWatchedOnStart", True)
+            self._pending_watched_update = None
             self._session = None
             self._block_sessions = []
             self._user_id = "abcd"
@@ -233,6 +235,15 @@ class Emby(Media):
         if self._user_id == data["UserId"]:
             user_data_list = data["UserDataList"]
             user_data = user_data_list[0]
+            pending = self._pending_watched_update
+            if pending is not None:
+                item_id, watched, expires_at = pending
+                if time.monotonic() >= expires_at:
+                    self._pending_watched_update = None
+                elif user_data["ItemId"] == item_id and user_data.get("Played") is watched:
+                    # 忽略本程序修改观看状态产生的回推，避免再次触发播放。
+                    self._pending_watched_update = None
+                    return
             # 防止重复播放
             if (user_data["ItemId"] in self._played_info
                     and time.time() - self._played_info[user_data["ItemId"]] <= self._repeat_filter_timeout):
@@ -411,20 +422,31 @@ class Emby(Media):
         设置影片是否观看
         :return:
         """
+        item = self._play_item
+        if item is None:
+            return False
+        if item.get("UserData", {}).get("Played") is watched:
+            return True
+        pending = (item["Id"], watched, time.monotonic() + 30)
+        # 必须在请求前登记，WebSocket 通知可能早于 HTTP 响应到达。
+        self._pending_watched_update = pending
         try:
-            url = "{}/emby/Users/{}/PlayedItems/{}".format(self._host, self._user_id, self._play_item["Id"])
+            url = "{}/emby/Users/{}/PlayedItems/{}".format(self._host, self._user_id, item["Id"])
             headers = self._get_headers()
             if watched:
-                res = requests.post(url=url, headers=headers)
+                res = requests.post(url=url, headers=headers, timeout=10)
             else:
-                res = requests.delete(url=url, headers=headers)
-            if res.status_code == 204:
-                logger.debug("set video watched status successfully")
+                res = requests.delete(url=url, headers=headers, timeout=10)
+            if res.status_code in (200, 204):
+                item.setdefault("UserData", {})["Played"] = watched
+                logger.info("set video watched status successfully, item: %s, watched: %s", item["Id"], watched)
                 return True
             else:
                 logger.error(f"Failed to set video watched status: {res.status_code} {res.text}")
         except Exception as e:
             logger.error(f"Exception during set video watched status: {e}")
+        if self._pending_watched_update is pending:
+            self._pending_watched_update = None
         return False
 
     def _session_send_message(self, session_id, header, message, timeout_ms):
@@ -508,6 +530,8 @@ class Emby(Media):
         """
         # 记录下此时的播放时间
         self._played_info[self._play_item["Id"]] = time.time()
+        if self._mark_watched_on_start:
+            self._set_if_watched(True)
         for block_session in self._block_sessions:
             # # 报告已开始
             # self._session_playing(self._session["Id"])
