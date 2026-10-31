@@ -1,0 +1,23 @@
+# 将此 Media 段替换到现有 config.yaml，保留并核对 Player / TV / AV 配置。
+Media:
+  Executor: media.feiniu.Feiniu
+  # 飞牛影视独立服务根地址，不是 NAS 桌面 5666 端口或 /v 网页地址。
+  Host: http://192.168.1.10:8005
+  Username: your-feiniu-user
+  Password: "your-feiniu-password"
+  # 首次验证保持 true：只记录候选和解析路径，不操作播放机或观看状态。
+  # 确认日志路径及 Player.MappingPath 正确后，改为 false 并重启。
+  DryRun: true
+  PollInterval: 2
+  RequestTimeout: 10
+  StartupTimeout: 60
+  # 同一影片进度持续变化时只触发一次；停止变化达到此秒数后才允许重新识别。
+  ActivityIdleTimeout: 90
+  RepeatFilterTimeout: 120
+  MarkWatchedOnStart: true
+  # 不希望交给先锋播放的文件类型；原盘也需要转发时不要排除 iso。
+  ExcludeVideoExt:
+    - mp4
+    - mkv
+  # 当前已核对的飞牛影视网页客户端签名版本。
+  WebClientVersion: "631"

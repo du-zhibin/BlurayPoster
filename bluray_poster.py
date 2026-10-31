@@ -76,11 +76,17 @@ def initialize_components(config):
     :return:
     """
     try:
-        player = initialize_component("Player", config, PlayerException)
-        tv = initialize_component("TV", config, TVException)
-        av = initialize_component("AV", config, AVException)
-
         media_config = config.get("Media")
+        dry_run = (media_config and media_config.get("Executor") == "media.feiniu.Feiniu"
+                   and media_config.get("DryRun") is True)
+        # Some device constructors start control threads, so omit them in DryRun.
+        if dry_run:
+            player = tv = av = None
+        else:
+            player = initialize_component("Player", config, PlayerException)
+            tv = initialize_component("TV", config, TVException)
+            av = initialize_component("AV", config, AVException)
+
         if media_config and "Executor" in media_config:
             module_name, class_name = media_config["Executor"].rsplit('.', 1)
             media_class = dynamic_import(module_name, class_name)
