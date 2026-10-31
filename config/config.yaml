@@ -6,6 +6,7 @@
 Version: "1.0.0"
 
 # 日志级别(如果发生问题搞不定的，把info改成debug然后重启，再把出问题时候的日志发上来, 问题修复后再改回info)
+# 日志文件：配置目录/logs/blurayposter.log，按天轮转并保留 7 份历史日志
 LogLevel: info
 
 

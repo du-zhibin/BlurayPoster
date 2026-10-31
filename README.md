@@ -12,14 +12,14 @@
 - [ ] 可以联动的TV目前仅支持索尼bravia系和Lg webos电视，以及hdfury和带hdmi输入的oppo系。
 - [ ] 可以联动的功放目前仅支持安桥功放
 - [ ] 如果你的电视或者功放暂时不在支持列表中，无法实现hdmi自由切换。不过可以手机/电脑/平板选片，就是少了在大屏幕上看海报墙选片的快乐。
-- [ ] 如果有问题, 可以提issue。把config.yaml文件中的"loglevel"的值由"info"改为"debug"然后运行程序,并且把发生问题时的日志(程序目录/logs下)发上来
+- [ ] 如果有问题, 可以提issue。把config.yaml文件中的"LogLevel"的值由"info"改为"debug"然后运行程序,并且把发生问题时的日志(配置目录/logs/blurayposter.log，Docker 内为 /config/logs/blurayposter.log)发上来。日志每天轮转，保留 7 份历史日志。
 
 
 ## 二、 开始
 
 ### 1. 打开电视的网络控制(如果你不需要控制电视，跳过这一步)
 - [sony bravia生成预共享密钥](https://pro-bravia.sony.net/zhs/develop/integrate/ip-control/index.html#ip-control-authentication)看页面上的"BRAVIA商用显示器设置"，在电视上自己设定预共享密钥，并且打开远程设备控制。
-- lg webos, 需要打开设置-支持-IP控制设置-网络IP控制 -> 打开；设置-支持-IP控制设置-LAN网络唤醒 -> 打开; 设置-常规-外部设备-用手机打开电视-通过wifi打开 -> 打开。程序第一次运行电视上会弹出确认，点击确认后以后就不会弹了。当然，如果你下一次重启程序，还会弹一次，解决方法是关闭程序后，在logs/下找到最新的日志，然后里面搜索client_key,把最新的key复制一下并填到config里tv的key中，以后都默认使用这个key，以后重启也不会弹了。
+- lg webos, 需要打开设置-支持-IP控制设置-网络IP控制 -> 打开；设置-支持-IP控制设置-LAN网络唤醒 -> 打开; 设置-常规-外部设备-用手机打开电视-通过wifi打开 -> 打开。程序第一次运行电视上会弹出确认，点击确认后以后就不会弹了。当然，如果你下一次重启程序，还会弹一次，解决方法是关闭程序后，在配置目录的logs/blurayposter.log中搜索client_key,把最新的key复制一下并填到config里tv的key中，以后都默认使用这个key，以后重启也不会弹了。
 - TCL 电视, 首先确保你的电视已开启“远程调试”或“ADB 调试”功能（通常在设置中的开发者选项里）。目前该功能**仅在 TCL X11G 型号上进行了测试**，其他型号由于系统差异可能支持不佳。本程序使用纯 Python 实现，无需在系统中安装 `adb` 命令行工具。播放结束时，默认会自动返回 Emby App。
     * tcv x11g 打开adb调试方法：
     * 打开电视，进入 设置 > 系统 > 系统信息 (或 关于本机) -> 本机信息。

@@ -20,9 +20,10 @@ logger = logging.getLogger(__name__)
 _API_KEY = "16CCEB3D-AB42-077D-36A1-F355324E4237"
 _SIGN_SALT = "NDzZTVxnRKP8Z0jXg1VAMonaG8akvh"
 _API = "/v/api/v1"
+_WEB_CLIENT_VERSION = "631"
 
 
-def signed_headers(method, path, token, payload=None, client_version="631"):
+def signed_headers(method, path, token, payload=None):
     url = urlsplit(path)
     if method.upper() == "GET":
         params = {k: v for k, v in parse_qsl(url.query, keep_blank_values=True)
@@ -38,7 +39,7 @@ def signed_headers(method, path, token, payload=None, client_version="631"):
     return {
         "Authorization": token,
         "X-Trim-Client": "web",
-        "X-Trim-Client-Version": str(client_version),
+        "X-Trim-Client-Version": _WEB_CLIENT_VERSION,
         "authx": f"nonce={nonce}&timestamp={timestamp}&sign={signature}",
         "Accept": "application/json",
         "Content-Type": "application/json",
@@ -123,24 +124,24 @@ class Feiniu(Media):
         if not isinstance(self._password, str):
             raise MediaException("Feiniu Password must be a string")
         self._poll_interval = self._number(config, "PollInterval", 2, 0.5)
+        self._offline_interval = self._number(config, "OfflineCheckInterval", 5, 1)
         self._request_timeout = self._number(config, "RequestTimeout", 10, 1)
         self._startup_timeout = self._number(config, "StartupTimeout", 60, 1)
         idle = self._number(config, "ActivityIdleTimeout", 90, 30)
         repeat = self._number(config, "RepeatFilterTimeout", 120, 0)
-        self._dry_run = config.get("DryRun", False)
-        self._mark_watched = config.get("MarkWatchedOnStart", True)
-        if not isinstance(self._dry_run, bool) or not isinstance(self._mark_watched, bool):
-            raise MediaException("Feiniu DryRun and MarkWatchedOnStart must be booleans")
+        self._only_when_online = config.get("OnlyWhenPlayerOnline", True)
+        if not isinstance(self._only_when_online, bool):
+            raise MediaException("Feiniu OnlyWhenPlayerOnline must be a boolean")
         excluded = config.get("ExcludeVideoExt") or []
         if not isinstance(excluded, list) or not all(isinstance(ext, str) for ext in excluded):
             raise MediaException("Feiniu ExcludeVideoExt must be a list of extensions")
         self._excluded = {ext.lower().lstrip(".") for ext in excluded}
-        self._client_version = config.get("WebClientVersion", "631")
         self._records = PlaybackRecords(idle, repeat)
         self._access_token = None
         self._auth_lock = threading.Lock()
         self._play_lock = threading.RLock()
         self._active = None
+        self._polling_online = None
         self._stop_event = threading.Event()
         self._thread = None
 
@@ -196,7 +197,7 @@ class Feiniu(Media):
         ).encode("utf-8")
         for attempt in range(2):
             token = self._token()
-            headers = signed_headers(method, path, token, payload, self._client_version)
+            headers = signed_headers(method, path, token, payload)
             try:
                 response = requests.request(
                     method, self._host + path, data=payload, headers=headers,
@@ -268,6 +269,8 @@ class Feiniu(Media):
                 "watched": bool(record.get("watched")), "started": False}
 
     def _dispatch_record(self, record):
+        if not self._check_player_online():
+            return
         with self._play_lock:
             if self._active is not None:
                 logger.info("Feiniu selection ignored while player is busy, item: %s", record["guid"])
@@ -277,9 +280,8 @@ class Feiniu(Media):
         if extension in self._excluded:
             logger.info("Feiniu video excluded by extension, item: %s", item["Id"])
             return
-        if self._dry_run:
-            logger.info("Feiniu DryRun candidate, item: %s, path: %s, container: %s",
-                        item["Id"], item["Path"], item["Container"])
+        # Resolution can take time; the player may have gone offline meanwhile.
+        if not self._check_player_online():
             return
         if self._player is None:
             raise MediaException("Feiniu has no configured player")
@@ -313,7 +315,28 @@ class Feiniu(Media):
                     self._active = None
             raise MediaException("Feiniu player dispatch failed") from None
 
+    def _check_player_online(self):
+        online = True
+        if self._only_when_online:
+            probe = getattr(self._player, "is_online", None)
+            if not callable(probe):
+                raise MediaException("Feiniu player has no online probe; configure a supported player")
+            try:
+                online = probe()
+            except Exception as error:
+                logger.debug("Feiniu player online probe failed (%s)", type(error).__name__)
+                online = False
+            if not isinstance(online, bool):
+                raise MediaException("Feiniu player does not support online detection; set OnlyWhenPlayerOnline: false")
+        if self._polling_online is not online:
+            self._records.reset_baseline()
+            self._polling_online = online
+            logger.info("Feiniu playback polling %s", "resumed with a new baseline" if online else "paused: player offline")
+        return online
+
     def _poll_once(self):
+        if not self._check_player_online():
+            return
         with self._play_lock:
             if (self._active is not None and not self._active["started"]
                     and time.monotonic() - self._active["requested_at"] >= self._startup_timeout):
@@ -341,7 +364,8 @@ class Feiniu(Media):
                 # Never log response bodies, request headers or credentials.
                 detail = str(error) if isinstance(error, MediaException) else type(error).__name__
                 logger.warning("Feiniu polling failed (%s); next success establishes a new baseline", detail)
-            delay = min(60, self._poll_interval * 2 ** min(failures, 5))
+            delay = (self._offline_interval if self._polling_online is False
+                     else min(60, self._poll_interval * 2 ** min(failures, 5)))
             self._stop_event.wait(delay)
 
     def _set_watched(self, item):
@@ -371,8 +395,7 @@ class Feiniu(Media):
             if item is None or self._active is not item or item["started"]:
                 return
             item["started"] = True
-            if self._mark_watched:
-                self._set_watched(item)
+            self._set_watched(item)
             self._notify_devices("play_begin")
 
     def on_play_in_progress(self, **kwargs):
@@ -392,19 +415,19 @@ class Feiniu(Media):
             self._active = None
 
     def start_before(self, **kwargs):
-        if not self._dry_run:
-            for device in (self._player, self._tv, self._av):
-                if device is not None:
-                    device.start_before()
+        for device in (self._player, self._tv, self._av):
+            if device is not None:
+                device.start_before()
 
     def start(self, **kwargs):
         if self._thread is not None and self._thread.is_alive():
             return
         self._stop_event.clear()
         self._records.reset_baseline()
+        self._polling_online = None
         self._thread = threading.Thread(target=self._poll_loop, name="feiniu-poll", daemon=True)
         self._thread.start()
-        logger.info("Feiniu playback polling started, DryRun: %s", self._dry_run)
+        logger.info("Feiniu playback polling started, OnlyWhenPlayerOnline: %s", self._only_when_online)
 
     def stop(self):
         self._stop_event.set()

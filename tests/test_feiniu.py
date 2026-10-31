@@ -10,6 +10,8 @@ import requests
 from abstract_classes import MediaException
 from bluray_poster import initialize_components
 from media.feiniu import Feiniu, PlaybackRecords, signed_headers
+from player.oppo import Oppo
+from player.pioneer import Pioneer
 
 
 def record(guid="movie-1", ts=10, **kwargs):
@@ -89,6 +91,7 @@ class PlaybackRecordTests(unittest.TestCase):
 class FeiniuTests(unittest.TestCase):
     def setUp(self):
         self.player, self.tv, self.av = Mock(), Mock(), Mock()
+        self.player.is_online.return_value = True
         self.player.play.return_value = None
         self.config = {"Host": "http://feiniu.test:8005", "Username": "user", "Password": "secret"}
         self.media = Feiniu(self.player, self.tv, self.av, self.config)
@@ -180,14 +183,13 @@ class FeiniuTests(unittest.TestCase):
         self.tv.play_begin.assert_called_once()
         self.assertIs(self.media._active, self.item)
 
-    def test_disabled_mark_on_start_retains_end_threshold(self):
-        self.media._mark_watched = False
+    def test_failed_start_mark_is_retried_at_end_threshold(self):
         args = self.dispatch()
         with patch.object(self.media, "_set_watched") as watched:
             args[3]()
-            watched.assert_not_called()
-            args[5](position_ticks=6000000000, total_ticks=7000000000)
             watched.assert_called_once_with(self.item)
+            args[5](position_ticks=6000000000, total_ticks=7000000000)
+            self.assertEqual(watched.call_count, 2)
 
     @patch("media.feiniu.requests.request")
     def test_already_watched_is_not_written_again(self, request):
@@ -195,40 +197,119 @@ class FeiniuTests(unittest.TestCase):
         self.dispatch()[3]()
         request.assert_not_called()
 
-    def test_dry_run_does_not_initialize_devices_play_or_write(self):
-        self.media._dry_run = True
-        self.media.start_before()
-        with patch.object(self.media, "_resolve_item", return_value=self.item), \
-                patch.object(self.media, "_native_request") as request, \
-                self.assertLogs("media.feiniu", level="INFO") as logs:
-            self.media._dispatch_record(self.row)
-        self.assertIn("DryRun candidate", logs.output[0])
-        self.player.start_before.assert_not_called()
-        self.tv.start_before.assert_not_called()
-        self.player.play.assert_not_called()
-        request.assert_not_called()
-
-    def test_application_dry_run_does_not_construct_device_control_threads(self):
+    def test_application_initializes_devices_without_a_mode_switch(self):
         settings = Mock()
         settings.get.side_effect = {
-            "Media": {**self.config, "Executor": "media.feiniu.Feiniu", "DryRun": True},
-        }.get
-        with patch("bluray_poster.initialize_component") as initialize:
-            media = initialize_components(settings)
-            media.start_before()
-        self.assertIsInstance(media, Feiniu)
-        initialize.assert_not_called()
-        self.assertIsNone(media._player)
-
-    def test_application_real_mode_still_initializes_devices(self):
-        settings = Mock()
-        settings.get.side_effect = {
-            "Media": {**self.config, "Executor": "media.feiniu.Feiniu", "DryRun": False},
+            "Media": {**self.config, "Executor": "media.feiniu.Feiniu"},
         }.get
         with patch("bluray_poster.initialize_component", return_value=self.player) as initialize:
             media = initialize_components(settings)
         self.assertEqual(initialize.call_count, 3)
         self.assertIs(media._player, self.player)
+
+    def test_start_before_initializes_configured_devices(self):
+        self.media.start_before()
+        for device in (self.player, self.tv, self.av):
+            device.start_before.assert_called_once()
+
+    @patch("media.feiniu.requests.post")
+    @patch("media.feiniu.requests.request")
+    def test_offline_player_causes_no_feiniu_login_or_read(self, request, post):
+        self.player.is_online.return_value = False
+        self.media._access_token = None
+        for _ in range(3):
+            self.media._poll_once()
+        post.assert_not_called()
+        request.assert_not_called()
+        self.assertIs(self.media._polling_online, False)
+        self.assertIsNone(self.media._records.previous)
+
+    def test_offline_clears_baseline_and_online_does_not_replay_history(self):
+        with patch.object(self.media, "_native_request", side_effect=[
+            [record(ts=10)], [record(ts=500)], [record(ts=500)], [record(ts=501)],
+        ]) as request, patch.object(self.media, "_dispatch_record") as dispatch:
+            self.media._poll_once()
+            self.player.is_online.return_value = False
+            self.media._poll_once()
+            self.assertIsNone(self.media._records.previous)
+            self.assertEqual(request.call_count, 1)
+            self.player.is_online.return_value = True
+            self.media._poll_once()
+            self.media._poll_once()
+            dispatch.assert_not_called()
+            self.media._poll_once()
+            dispatch.assert_called_once()
+            self.assertEqual(dispatch.call_args.args[0]["ts"], 501)
+
+    def test_offline_direct_dispatch_does_not_query_file_or_play(self):
+        self.player.is_online.return_value = False
+        with patch.object(self.media, "_resolve_item") as resolve:
+            self.media._dispatch_record(self.row)
+        resolve.assert_not_called()
+        self.player.play.assert_not_called()
+
+    def test_player_shutdown_during_file_lookup_prevents_dispatch(self):
+        def resolve(_):
+            self.player.is_online.return_value = False
+            return self.item
+
+        with patch.object(self.media, "_resolve_item", side_effect=resolve):
+            self.media._dispatch_record(self.row)
+        self.player.play.assert_not_called()
+        self.assertIs(self.media._polling_online, False)
+        self.assertIsNone(self.media._active)
+
+    def test_shutdown_during_record_query_prevents_file_lookup(self):
+        self.media._polling_online = True
+        self.media._records.update([record(ts=10)], 0)
+
+        def query(*args):
+            self.player.is_online.return_value = False
+            return [record(ts=11)]
+
+        with patch.object(self.media, "_native_request", side_effect=query), \
+                patch.object(self.media, "_resolve_item") as resolve:
+            self.media._poll_once()
+        resolve.assert_not_called()
+        self.player.play.assert_not_called()
+        self.assertIsNone(self.media._records.previous)
+
+    def test_online_gate_can_be_disabled(self):
+        self.media._only_when_online = False
+        self.player.is_online.return_value = False
+        with patch.object(self.media, "_native_request", return_value=[]) as request:
+            self.media._poll_once()
+        request.assert_called_once()
+        self.player.is_online.assert_not_called()
+
+    def test_unknown_player_online_capability_fails_clearly(self):
+        self.player.is_online.return_value = None
+        with patch.object(self.media, "_native_request") as request, \
+                self.assertRaisesRegex(MediaException, "does not support online detection"):
+            self.media._poll_once()
+        request.assert_not_called()
+
+    def test_probe_failure_pauses_without_querying_feiniu(self):
+        self.player.is_online.side_effect = OSError("offline")
+        with patch.object(self.media, "_native_request") as request:
+            self.media._poll_once()
+        request.assert_not_called()
+        self.assertIs(self.media._polling_online, False)
+
+    def test_offline_loop_uses_configured_check_interval(self):
+        self.player.is_online.return_value = False
+        self.media._offline_interval = 7
+        with patch.object(self.media, "_native_request") as request, \
+                patch.object(self.media._stop_event, "wait", side_effect=lambda _: self.media.stop()) as wait:
+            self.media._poll_loop()
+        request.assert_not_called()
+        wait.assert_called_once_with(7)
+
+    def test_online_loop_uses_playback_poll_interval(self):
+        with patch.object(self.media, "_native_request", return_value=[]), \
+                patch.object(self.media._stop_event, "wait", side_effect=lambda _: self.media.stop()) as wait:
+            self.media._poll_loop()
+        wait.assert_called_once_with(2)
 
     def test_excluded_extension_not_sent_to_player(self):
         self.media._excluded = {"mkv"}
@@ -332,7 +413,8 @@ class FeiniuTests(unittest.TestCase):
         for extra in (
             {"Host": "http://user:password@nas:8005"}, {"Host": "http://nas:5666/v"},
             {"PollInterval": 0}, {"ActivityIdleTimeout": 1}, {"RequestTimeout": float("inf")},
-            {"DryRun": "false"}, {"ExcludeVideoExt": "mkv"}, {"Password": 1234},
+            {"OnlyWhenPlayerOnline": "false"}, {"OfflineCheckInterval": 0},
+            {"ExcludeVideoExt": "mkv"}, {"Password": 1234},
         ):
             with self.subTest(extra=extra), self.assertRaises(MediaException):
                 Feiniu(self.player, None, None, {**self.config, **extra})
@@ -344,6 +426,7 @@ class SignatureTests(unittest.TestCase):
     def test_get_matches_probe_reference(self, clock, nonce):
         # This vector follows the installed web client's URLSearchParams rules.
         headers = signed_headers("GET", "/v/api/v1/play/list", "token")
+        self.assertEqual(headers["X-Trim-Client-Version"], "631")
         self.assertEqual(headers["authx"],
                          "nonce=334567&timestamp=1700000000000&sign=d141903fb5d1a1136e6e00aed4f9a291")
 
@@ -354,6 +437,33 @@ class SignatureTests(unittest.TestCase):
                                  b'{"item_guid":"movie-1"}')
         self.assertEqual(headers["authx"],
                          "nonce=334567&timestamp=1700000000000&sign=e13125e8645a3f3249976fe29422d1bd")
+
+
+class PlayerOnlineTests(unittest.TestCase):
+    @patch("player.pioneer.socket.create_connection")
+    def test_pioneer_checks_live_control_port_and_closes_connection(self, connect):
+        player = Pioneer.__new__(Pioneer)
+        player._ip, player._port, player._online_status = "player.test", 8090, 0
+        self.assertTrue(player.is_online())
+        connect.assert_called_once_with(("player.test", 8090), timeout=1)
+        connect.return_value.close.assert_called_once()
+
+    @patch("player.pioneer.socket.create_connection", side_effect=ConnectionRefusedError)
+    def test_pioneer_does_not_trust_optimistic_cached_status(self, connect):
+        player = Pioneer.__new__(Pioneer)
+        player._ip, player._port, player._online_status = "player.test", 8090, 1
+        self.assertFalse(player.is_online())
+
+    @patch("player.oppo.socket.create_connection")
+    def test_oppo_checks_control_service_without_sending_wakeup(self, connect):
+        player = Oppo({"IP": "oppo.test"})
+        self.assertTrue(player.is_online())
+        connect.assert_called_once_with(("oppo.test", 436), timeout=1)
+        connect.return_value.__exit__.assert_called_once()
+
+    @patch("player.oppo.socket.create_connection", side_effect=OSError)
+    def test_oppo_unreachable_is_offline(self, connect):
+        self.assertFalse(Oppo({"IP": "oppo.test"}).is_online())
 
 
 if __name__ == "__main__":

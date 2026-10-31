@@ -527,6 +527,10 @@ class Pioneer(Player):
             logger.error(f"play resolved file exception, error: {e}")
         return False
 
+    def is_online(self):
+        # The background status is initially optimistic and debounces shutdown.
+        return self._is_port_open()
+
     def start_before(self, **kwargs):
         """
         启动前

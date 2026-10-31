@@ -21,15 +21,26 @@ def setup_logging(log_level_str):
     建立日志，滚动日志，每天一个日志文件，保留最近7天
     :return:
     """
-    log_directory = 'logs'
-    if not os.path.exists(log_directory):
-        os.makedirs(log_directory)
+    log_directory = os.path.join(os.getenv("CONFIG_DIR", "config"), "logs")
+    os.makedirs(log_directory, exist_ok=True)
     logger = logging.getLogger()
     log_level = getattr(logging, log_level_str.upper(), logging.DEBUG)
     logger.setLevel(log_level)
     console_handler = logging.StreamHandler()
     console_handler.setLevel(log_level)
+    file_handler = TimedRotatingFileHandler(
+        os.path.join(log_directory, "blurayposter.log"),
+        when="midnight", interval=1, backupCount=7, encoding="utf-8",
+    )
+    file_handler.setLevel(log_level)
+    formatter = logging.Formatter(
+        "%(asctime)s %(levelname)s [%(name)s] %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
+    console_handler.setFormatter(formatter)
+    file_handler.setFormatter(formatter)
     logger.addHandler(console_handler)
+    logger.addHandler(file_handler)
 
 
 def dynamic_import(module_name, class_name):
@@ -76,17 +87,11 @@ def initialize_components(config):
     :return:
     """
     try:
-        media_config = config.get("Media")
-        dry_run = (media_config and media_config.get("Executor") == "media.feiniu.Feiniu"
-                   and media_config.get("DryRun") is True)
-        # Some device constructors start control threads, so omit them in DryRun.
-        if dry_run:
-            player = tv = av = None
-        else:
-            player = initialize_component("Player", config, PlayerException)
-            tv = initialize_component("TV", config, TVException)
-            av = initialize_component("AV", config, AVException)
+        player = initialize_component("Player", config, PlayerException)
+        tv = initialize_component("TV", config, TVException)
+        av = initialize_component("AV", config, AVException)
 
+        media_config = config.get("Media")
         if media_config and "Executor" in media_config:
             module_name, class_name = media_config["Executor"].rsplit('.', 1)
             media_class = dynamic_import(module_name, class_name)
