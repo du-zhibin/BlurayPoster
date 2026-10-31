@@ -70,6 +70,7 @@ class MockPlayer:
 
     def __init__(self, reject_users=(), devices=None, tree=None):
         self.requests = []
+        self.raw_requests = []
         self.play_requests = []
         self.login_requests = []
         self.reject_users = set(reject_users)
@@ -91,7 +92,9 @@ class MockPlayer:
 
             def do_POST(self):
                 length = int(self.headers.get("Content-Length", 0))
-                body = json.loads(self.rfile.read(length).decode("utf-8"))
+                raw = self.rfile.read(length)
+                outer.raw_requests.append(raw)
+                body = json.loads(raw.decode("utf-8"))
                 outer.requests.append(body)
                 result = outer.dispatch(body)
                 payload = json.dumps({"jsonrpc": "2.0", "id": body.get("id", "1"), "result": result})
@@ -123,8 +126,12 @@ class MockPlayer:
                 return {"files": [], "limits": {"start": 0, "end": 63, "total": 0}}
             entries = self.tree.get((params.get("host"), params.get("path")), [])
             return {"files": entries, "limits": {"start": 0, "end": 63, "total": len(entries)}}
-        if method == "Browser.NetShareGetFiles":
-            entries = self.tree.get((params.get("host"), params.get("path")), [])
+        if method in ("Browser.NetShareGetFiles", "Browser.GetFiles"):
+            if method == "Browser.NetShareGetFiles":
+                entries = self.tree.get((params.get("host"), params.get("path")), [])
+            else:
+                entries = next((children for (path, _), children in self.tree.items()
+                                if path == params.get("path")), [])
             start, end = params["limits"]["start"], params["limits"]["end"]
             return {"files": entries[start:end],
                     "limits": {"start": start, "end": min(end, len(entries)), "total": len(entries)}}
@@ -217,6 +224,26 @@ class PioneerMultiDirectoryTest(unittest.TestCase):
         # repeat 跟随 f_class，与 App 行为一致
         self.assertEqual(params["repeat"], 8)
 
+    def test_share_root_and_child_directories_use_the_app_methods(self):
+        player = self.build([
+            {"Media": "/mnt/Video3", "NFS": "/192.168.1.10/Series"},
+        ])
+        self.play(player, "/mnt/Video3/S01/E01.mkv", "mkv")
+        self.assertEqual(self.messages, [])
+        root = [r["params"] for r in self.player_stub.requests
+                if r["method"] == "Browser.NetShareGetFiles"]
+        children = [r["params"] for r in self.player_stub.requests
+                    if r["method"] == "Browser.GetFiles"]
+        self.assertEqual(len(root), 1)
+        self.assertEqual(root[0]["path"], "Series")
+        self.assertEqual(root[0]["f_class"], 96)
+        self.assertEqual(len(children), 1)
+        self.assertEqual(children[0]["path"], "/nfs/192.168.1.10/Series/S01")
+        self.assertEqual(children[0]["f_class"], 1)
+        self.assertNotIn("host", children[0])
+        self.assertNotIn("passwd", children[0])
+        self.assertEqual(self.only_play()["f_class"], 8)
+
     def test_auth_list_falls_back_to_next_account(self):
         self.player_stub.stop()
         self.player_stub = MockPlayer(reject_users={"baduser"})
@@ -243,6 +270,25 @@ class PioneerMultiDirectoryTest(unittest.TestCase):
 
         # 旧的单共享行为：去掉服务器名后拼 /mnt/cifs/
         self.assertEqual(self.only_play()["file"], "/mnt/cifs/Video/Movie/Dune.iso")
+
+    def test_chinese_playback_paths_are_sent_as_utf8_bytes_in_both_modes(self):
+        name = "发条橙.iso"
+        key = ("/smb/NAS466C/Video/Movie", "Movie")
+        self.player_stub.tree = {**TREE, key: [
+            entry(1, 4, 0, name, "/smb/NAS466C/Video/Movie/" + name, 80),
+        ]}
+        for use_netshare in (True, False):
+            with self.subTest(use_netshare=use_netshare):
+                player = self.build([
+                    {"Media": "/mnt/Video", "SMB": "/NAS466C/Video"},
+                ], extra={"NFSPrefer": False, "UseNetShareLogin": use_netshare})
+                self.play(player, "/mnt/Video/Movie/" + name, "bluray")
+                self.assertEqual(self.messages, [])
+                raw = next(raw for raw in reversed(self.player_stub.raw_requests)
+                           if json.loads(raw)["method"] == "Playback.PlayFile")
+                self.assertIn(name.encode("utf-8"), raw)
+                self.assertNotIn(b"\\u53d1", raw)
+                self.assertTrue(self.player_stub.play_requests[-1]["file"].endswith("/" + name))
 
     def test_missing_mapping_reports_error(self):
         config = {"IP": "127.0.0.1"}
@@ -341,6 +387,15 @@ class PioneerMultiDirectoryTest(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "分页提前结束"):
                 player._list_net_share(node, {})
         self.assertEqual(player._listing_cache, {})
+
+    def test_non_directory_reply_stops_without_caching(self):
+        player = self.build([])
+        node = TREE[("/nfs/192.168.1.10/Series", "Series")][0]
+        for result in ("0", "-1", None, []):
+            with self.subTest(result=result), patch.object(player, "_rpc", return_value=result):
+                with self.assertRaisesRegex(RuntimeError, "未返回目录对象"):
+                    player._list_net_share(node, {})
+            self.assertEqual(player._listing_cache, {})
 
     def test_feiniu_nfs_export_label_with_old_mount_hint(self):
         self.player_stub.tree = {

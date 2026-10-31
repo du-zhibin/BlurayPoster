@@ -291,7 +291,9 @@ class Pioneer(Player):
             }
 
             # 发起 POST 请求
-            res = requests.post(url, headers=self._headers, data=json.dumps(request_body))
+            res = requests.post(url, headers=self._headers,
+                                data=json.dumps(request_body, ensure_ascii=False).encode('utf-8'),
+                                timeout=self._netshare_timeout)
 
             if res.status_code == 200:
                 result = res.json()
@@ -308,7 +310,8 @@ class Pioneer(Player):
         body = {"method": method, "id": "1", "jsonrpc": "2.0"}
         if params is not None:
             body["params"] = params
-        res = requests.post(self._http_host, headers=self._headers, data=json.dumps(body),
+        res = requests.post(self._http_host, headers=self._headers,
+                            data=json.dumps(body, ensure_ascii=False).encode('utf-8'),
                             timeout=timeout or self._netshare_timeout)
         if res.status_code != 200:
             raise RuntimeError(f"{method} http {res.status_code}: {res.text}")
@@ -415,12 +418,25 @@ class Pioneer(Player):
             "f_class": node.get('f_class', 1),
             "f_idx": node.get('f_idx', 0),
         }
+        method = 'Browser.NetShareGetFiles'
+        if node.get('f_class') != 96:
+            # The app only uses NetShareGetFiles to enter a share. Once mounted,
+            # child directories are browsed by their full player-side path.
+            method = 'Browser.GetFiles'
+            params = {
+                "dev_idx": node.get('dev_idx', 0),
+                "dev_type": node.get('dev_type', 0),
+                "f_class": node.get('f_class', 1),
+                "path": node.get('file') or node.get('path') or '',
+            }
         children, pages = [], set()
         while True:
             start = len(children)
-            result = self._rpc('Browser.NetShareGetFiles', {
+            result = self._rpc(method, {
                 **params, "limits": {"start": start, "end": start + 63},
-            }) or {}
+            })
+            if not isinstance(result, dict):
+                raise RuntimeError(f"{method} 未返回目录对象，停止浏览")
             page = result.get('files') or []
             if not isinstance(page, list) or not all(isinstance(item, dict) for item in page):
                 raise RuntimeError("网络共享目录返回了无效的文件列表")
@@ -537,7 +553,8 @@ class Pioneer(Player):
         }
         logger.debug(f"play resolved file: {request_body}")
         try:
-            res = requests.post(self._http_host, headers=self._headers, data=json.dumps(request_body),
+            res = requests.post(self._http_host, headers=self._headers,
+                                data=json.dumps(request_body, ensure_ascii=False).encode('utf-8'),
                                 timeout=self._netshare_timeout)
             if res.status_code == 200:
                 result = res.json()
