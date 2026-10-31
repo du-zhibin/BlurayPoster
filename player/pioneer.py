@@ -57,6 +57,10 @@ class Pioneer(Player):
             self._netshare_timeout = self._config.get('NetShareTimeout', 8)
             self._netshare_cache = self._config.get('NetShareCache', 300)
             self._share_cache = {}
+            # 按 server 缓存登录结果（entries + 用过的账号），避免同一共享的后续影片重复登录
+            self._login_cache = {}
+            # 按目录节点缓存子项列表，避免重复播放时逐层重新浏览
+            self._listing_cache = {}
             self._device_cache = {'time': 0, 'devices': []}
 
             self._startup_key_sequence = self._config.get('StartupKeySequence', [])
@@ -323,20 +327,45 @@ class Pioneer(Player):
         return devices
 
     def _find_device(self, server):
-        devices = self._get_devices()
+        """在播放机的源列表里找这台主机。
+
+        找不到时不报错，而是按配置的协议构造一个源直接登录——
+        这样 NAS 是否出现在播放机的源列表里不再是硬性前提。
+        """
+        wanted = self.DEV_TYPE_NFS if self._use_nfs else self.DEV_TYPE_SMB
+        try:
+            devices = self._get_devices()
+        except Exception as e:
+            logger.error(f"Browser.GetDevices 失败: {e}")
+            devices = []
         network = [d for d in devices if d.get('dev_type') in (self.DEV_TYPE_NFS, self.DEV_TYPE_SMB)]
-        if not network:
-            raise RuntimeError(
-                "播放机没有列出任何网络数据源，请先在播放机的网络设置里添加该共享；"
-                f"当前设备: {[(d.get('dev_type'), d.get('label')) for d in devices]}")
+        logger.debug("播放机源列表: {}".format(
+            [(d.get('dev_type'), d.get('label'), d.get('path')) for d in devices]))
         for device in network:
             if device.get('label') == server or device.get('path') == server:
                 return device
-        wanted = self.DEV_TYPE_NFS if self._use_nfs else self.DEV_TYPE_SMB
         for device in network:
             if device.get('dev_type') == wanted:
                 return device
-        return network[0]
+        if network:
+            return network[0]
+        logger.warning(
+            "播放机未列出任何网络源，直接按协议构造源登录: dev_type={} host={}（播放机当前源: {}）".format(
+                wanted, server, [(d.get('dev_type'), d.get('label')) for d in devices]))
+        return {"dev_idx": 0, "dev_type": wanted, "label": server, "path": ""}
+
+    def _login_with_fallback(self, device):
+        """先按配置协议的 dev_type 登录，失败再换另一种协议设备类型重试一次。"""
+        try:
+            return self._login_net_share(device)
+        except Exception as primary:
+            alternate = (self.DEV_TYPE_SMB if device.get('dev_type') == self.DEV_TYPE_NFS
+                         else self.DEV_TYPE_NFS)
+            if alternate == device.get('dev_type'):
+                raise
+            logger.warning("登录失败(dev_type={}): {}；改用 dev_type={} 重试".format(
+                device.get('dev_type'), primary, alternate))
+            return self._login_net_share(dict(device, dev_type=alternate))
 
     def _login_net_share(self, device):
         """用 Auth 列表依次尝试登录网络共享，成功后把用过的账号移到队尾。"""
@@ -371,6 +400,10 @@ class Pioneer(Player):
         raise RuntimeError(f"网络共享登录失败: {last_error}")
 
     def _list_net_share(self, node, auth_item):
+        cache_key = (node.get('file') or node.get('path'), node.get('label'))
+        cached = self._listing_cache.get(cache_key)
+        if cached and time.time() - cached[0] < self._netshare_cache:
+            return cached[1]
         result = self._rpc('Browser.NetShareGetFiles', {
             "dev_idx": node.get('dev_idx', 0),
             "dev_type": node.get('dev_type', 0),
@@ -383,7 +416,9 @@ class Pioneer(Player):
             "f_idx": node.get('f_idx', 0),
             "limits": {"start": 0, "end": 63},
         })
-        return (result or {}).get('files') or []
+        children = (result or {}).get('files') or []
+        self._listing_cache[cache_key] = (time.time(), children)
+        return children
 
     @staticmethod
     def _force_mount_split(folder, force_mount_path):
@@ -425,8 +460,15 @@ class Pioneer(Player):
         if cached and time.time() - cached[0] < self._netshare_cache:
             return cached[1]
 
-        device = self._find_device(server)
-        entries, auth_item = self._login_net_share(device)
+        # 登录（含挂载）是最贵的一步，按 server 缓存，后续影片直接复用
+        login_cached = self._login_cache.get(server)
+        if login_cached and time.time() - login_cached[0] < self._netshare_cache:
+            entries, auth_item = login_cached[1], login_cached[2]
+            logger.debug(f"reuse cached net share login for {server}")
+        else:
+            device = self._find_device(server)
+            entries, auth_item = self._login_with_fallback(device)
+            self._login_cache[server] = (time.time(), entries, auth_item)
         hint, within = self._force_mount_split(folder, self._force_mount_path)
         node, remaining = self._select_share(entries, within, hint)
         logger.debug(f"selected share: {node.get('label')}, remaining: {remaining}")
@@ -446,8 +488,10 @@ class Pioneer(Player):
 
         logger.debug(f"resolved media via player browse: {node}")
         self._share_cache[cache_key] = (time.time(), node)
-        for stale in [k for k, v in self._share_cache.items() if time.time() - v[0] >= self._netshare_cache]:
-            self._share_cache.pop(stale, None)
+        now = time.time()
+        for store in (self._share_cache, self._login_cache, self._listing_cache):
+            for stale in [k for k, v in store.items() if now - v[0] >= self._netshare_cache]:
+                store.pop(stale, None)
         return node
 
     def _play_entry(self, entry, play_type):

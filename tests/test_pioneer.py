@@ -42,6 +42,11 @@ TREE = {
     ],
     ("/smb/NAS466C/Video/Movie", "Movie"): [
         entry(1, 4, 0, "Dune.iso", "/smb/NAS466C/Video/Movie/Dune.iso", 80),
+        entry(1, 4, 1, "Dune2.iso", "/smb/NAS466C/Video/Movie/Dune2.iso", 80),
+    ],
+    # 播放机源列表里没有该主机时，代码会用 path="" 直接登录主机
+    ("NAS466C", ""): [
+        entry(1, 4, 0, "Video", "/smb/NAS466C/Video", 96),
     ],
     ("/smb/NAS466C/Video2", "Video2"): [
         entry(1, 4, 0, "Dune.iso", "/smb/NAS466C/Video2/Dune.iso", 80),
@@ -62,11 +67,12 @@ TREE = {
 class MockPlayer:
     """记录收到的 JSON-RPC 请求，并按 TREE 返回结果。"""
 
-    def __init__(self, reject_users=()):
+    def __init__(self, reject_users=(), devices=None):
         self.requests = []
         self.play_requests = []
         self.login_requests = []
         self.reject_users = set(reject_users)
+        self.devices = DEVICES if devices is None else devices
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), self._handler())
         self.port = self.server.server_address[1]
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
@@ -107,7 +113,8 @@ class MockPlayer:
         method = body.get("method")
         params = body.get("params") or {}
         if method == "Browser.GetDevices":
-            return {"devices": DEVICES, "limits": {"start": 1, "end": 32, "total": len(DEVICES)}}
+            return {"devices": self.devices,
+                    "limits": {"start": 1, "end": 32, "total": len(self.devices)}}
         if method == "Browser.NetShareLogin":
             self.login_requests.append(params)
             if self._decode(params.get("user")) in self.reject_users:
@@ -249,6 +256,40 @@ class PioneerMultiDirectoryTest(unittest.TestCase):
         self.assertEqual(len(self.player_stub.play_requests), 0)
         self.assertEqual(self.messages[0][0], "Error")
         self.assertIn("Missing.mkv", self.messages[0][1])
+
+    def test_nas_absent_from_device_list_still_plays(self):
+        # 播放机源列表为空：不再报错，而是按协议直接构造源登录
+        self.player_stub.stop()
+        self.player_stub = MockPlayer(devices=[])
+        player = self.build([
+            {"Media": "/mnt/Video", "SMB": "/NAS466C/Video", "NFS": "/192.168.1.10/Video"},
+        ], extra={"NFSPrefer": False})
+        self.play(player, "/mnt/Video/Movie/Dune.iso", "bluray")
+
+        self.assertEqual(self.messages, [])
+        params = self.only_play()
+        self.assertEqual(params["file"], "/smb/NAS466C/Video/Movie/Dune.iso")
+        # 起播用的是浏览结果里的真实身份
+        self.assertEqual(params["dev_type"], 4)
+        # 登录用的是按配置协议合成的源
+        login = self.player_stub.login_requests[0]
+        self.assertEqual(login["dev_idx"], 0)
+        self.assertEqual(login["dev_type"], 4)
+        self.assertEqual(login["host"], "NAS466C")
+
+    def test_login_is_cached_between_plays(self):
+        player = self.build([
+            {"Media": "/mnt/Video", "SMB": "/NAS466C/Video", "NFS": "/192.168.1.10/Video"},
+        ], extra={"NFSPrefer": False})
+        self.play(player, "/mnt/Video/Movie/Dune.iso", "bluray")
+        player._play_status = -1  # 允许第二次播放
+        self.play(player, "/mnt/Video/Movie/Dune2.iso", "bluray")
+
+        self.assertEqual(len(self.player_stub.play_requests), 2)
+        self.assertEqual(self.player_stub.play_requests[1]["file"],
+                         "/smb/NAS466C/Video/Movie/Dune2.iso")
+        # 同一主机的登录与目录列表只做一次
+        self.assertEqual(len(self.player_stub.login_requests), 1)
 
 
 if __name__ == "__main__":
