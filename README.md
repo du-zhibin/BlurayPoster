@@ -325,13 +325,25 @@ AV:
 #  如果第一步进阶配置中配了很多个，而且很多前面都有重复的路径，适合简化一样
 #
 #### 路径配置说明 -> pioneer
-# 不管 smb,或者 nfs, 只支持单一共享文件夹, 如果有多个共享文件夹, 建议合并成一个上层目录再通过 nfs 或者 smb 进行共享.
-# 否则播放不同目录的电影都需要手动在播放机上切换到对应目录, 比较麻烦, 还可能切换的目录对不上就播放失败,导致黑屏, 只能重启播放机.
-# 以 nfs 举例: media部分和上面 oppo一致,
-# nfs部分去掉 ip后面以"-"开头那一节, 比如
-# Media: /volume1/Media/Movie
-# NFS: /10.0.1.4/Movie
-# 在播放机看到的路径是 10.0.1.4/-volume1-Media/Movie, 去掉"-volume1-Media"就是/10.0.1.4/Movie
+# 从本版本起, pioneer 与 oppo 使用完全相同的配置方式(MappingPath + Auth + NFSPrefer + ForceMountPath),
+# 支持任意多个共享文件夹, 不再需要手动在播放机上进入目录, 也不再需要把多个共享合并成一个上层目录.
+#
+# 工作方式: 按 MappingPath 映射后, 由播放机自己登录目标共享并浏览到影片,
+# 再用播放机返回的真实路径和 dev_idx/dev_type 下发 Playback.PlayFile.
+# 因此每个共享只需要一条 MappingPath, 例如:
+# Media: /mnt/Video
+# SMB: /NAS466C/Video
+# NFS: /192.168.1.10/Video
+# Media: /mnt/Video2
+# SMB: /NAS466C/Video2
+# NFS: /192.168.1.10/Video2
+#
+# SMB/NFS 的账号密码写在 Auth 列表里, 会按顺序尝试, 成功后把该账号移到队尾.
+# 如果共享(导出)名跨多级, 例如飞牛 NFS 的 fs/1000/nfs, 用 ForceMountPath 指出共享根:
+# ForceMountPath: fs/1000/nfs
+#
+# 需要回到旧行为(手动进入目录 + 固定 /mnt/cifs/ 前缀)时, 设置 UseNetShareLogin: false.
+# 下面第 3 条的 mount --bind 合并目录做法仍然可用, 但已经不是必须的.
 #
 # 多个硬盘或多个分区如何用一个共享目录(可以有子目录, 但是最层用于共享的目录只能一个):
 # 1. 比较笨的办法就是把蓝光片全部落到一个硬盘然后共享.
