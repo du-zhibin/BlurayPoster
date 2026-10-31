@@ -248,21 +248,21 @@ class Feiniu(Media):
             if extension in containers:
                 container = extension
             else:
-                # Disc directories can contain dots. Use compatible metadata
-                # rather than mistaking a release-name suffix for a video type.
-                token = self._token()
-                try:
-                    response = requests.get(
-                        self._host + "/Items/" + quote(record["guid"], safe=""),
-                        headers={"X-Emby-Token": token, "Accept": "application/json"},
-                        timeout=self._request_timeout, allow_redirects=False,
-                    )
-                except requests.RequestException as error:
-                    raise MediaException(f"Feiniu item lookup failed ({type(error).__name__})") from None
-                info = self._json(response, "item")
-                if (not isinstance(info, dict) or not isinstance(info.get("Path"), str)
-                        or info["Path"].rstrip("/") != path.rstrip("/")
-                        or str(info.get("Container", "")).lower() not in ("bluray", "bdmv")):
+                # Release names can contain dots. Confirm the selected version's
+                # disc structure through the native file browser.
+                children = self._native_request("POST", _API + "/server/path", {"path": path})
+                bdmv = [child for child in children if isinstance(child, dict)
+                        and str(child.get("filename", "")).lower() == "bdmv"
+                        and child.get("is_dir") is True] if isinstance(children, list) else []
+                if len(bdmv) != 1:
+                    raise MediaException("Feiniu cannot identify the selected disc directory")
+                contents = self._native_request("POST", _API + "/server/path", {
+                    "path": str(file_path / bdmv[0]["filename"]),
+                })
+                if not isinstance(contents, list) or not any(
+                        isinstance(child, dict)
+                        and str(child.get("filename", "")).lower() == "index.bdmv"
+                        and child.get("is_dir") is False for child in contents):
                     raise MediaException("Feiniu cannot identify the selected disc directory")
                 container = "bluray"
         return {"Id": record["guid"], "Path": path, "Container": container,

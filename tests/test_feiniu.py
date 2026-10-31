@@ -347,16 +347,32 @@ class FeiniuTests(unittest.TestCase):
                 item = self.media._resolve_item(self.row)
                 self.assertEqual((item["Path"], item["Container"]), ("/disc", "bluray"))
 
-    @patch("media.feiniu.requests.get")
-    def test_dotted_disc_directory_uses_matching_compat_metadata(self, get):
+    def test_dotted_disc_directory_checks_native_disc_structure(self):
         path = "/Movie.2024.2160p"
-        get.return_value = response({"Path": path, "Container": "bluray"})
-        with patch.object(self.media, "_native_request", return_value=[
-            {"media_guid": self.row["media_guid"], "file_path": path},
-        ]):
+        with patch.object(self.media, "_native_request", side_effect=[
+            [{"media_guid": self.row["media_guid"], "file_path": path}],
+            [{"filename": "BDMV", "is_dir": True}],
+            [{"filename": "index.bdmv", "is_dir": False}],
+        ]) as request:
             self.assertEqual(self.media._resolve_item(self.row)["Container"], "bluray")
-            get.return_value = response({"Path": "/different-version", "Container": "bluray"})
-            with self.assertRaises(MediaException):
+        self.assertEqual(request.call_args_list[1].args,
+                         ("POST", "/v/api/v1/server/path", {"path": path}))
+        self.assertEqual(request.call_args_list[2].args,
+                         ("POST", "/v/api/v1/server/path", {"path": path + "/BDMV"}))
+
+    def test_unknown_path_must_contain_a_real_bdmv_index(self):
+        for children, contents in (
+            (None, []), ([], []),
+            ([{"filename": "BDMV", "is_dir": False}], []),
+            ([{"filename": "BDMV", "is_dir": True}], []),
+            ([{"filename": "BDMV", "is_dir": True}], [{"filename": "index.bdmv", "is_dir": True}]),
+        ):
+            with self.subTest(children=children, contents=contents), patch.object(
+                self.media, "_native_request", side_effect=[
+                    [{"media_guid": self.row["media_guid"], "file_path": "/unknown.release"}],
+                    children, contents,
+                ],
+            ), self.assertRaisesRegex(MediaException, "cannot identify"):
                 self.media._resolve_item(self.row)
 
     @patch("media.feiniu.requests.post")
