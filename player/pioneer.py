@@ -404,7 +404,7 @@ class Pioneer(Player):
         cached = self._listing_cache.get(cache_key)
         if cached and time.time() - cached[0] < self._netshare_cache:
             return cached[1]
-        result = self._rpc('Browser.NetShareGetFiles', {
+        params = {
             "dev_idx": node.get('dev_idx', 0),
             "dev_type": node.get('dev_type', 0),
             "host": node.get('file') or node.get('path') or '',
@@ -414,9 +414,31 @@ class Pioneer(Player):
             "passwd": self._b64(auth_item.get("Password", "")),
             "f_class": node.get('f_class', 1),
             "f_idx": node.get('f_idx', 0),
-            "limits": {"start": 0, "end": 63},
-        })
-        children = (result or {}).get('files') or []
+        }
+        children, pages = [], set()
+        while True:
+            start = len(children)
+            result = self._rpc('Browser.NetShareGetFiles', {
+                **params, "limits": {"start": start, "end": start + 63},
+            }) or {}
+            page = result.get('files') or []
+            if not isinstance(page, list) or not all(isinstance(item, dict) for item in page):
+                raise RuntimeError("网络共享目录返回了无效的文件列表")
+            signature = tuple((item.get('file'), item.get('label'), item.get('f_idx'))
+                              for item in page)
+            if page and signature in pages:
+                raise RuntimeError("网络共享目录分页未前进，停止浏览")
+            pages.add(signature)
+            children.extend(page)
+            total = (result.get('limits') or {}).get('total')
+            if total is None:
+                break
+            if isinstance(total, bool) or not isinstance(total, int) or total < 0:
+                raise RuntimeError("网络共享目录返回了无效的分页总数")
+            if len(children) >= total:
+                break
+            if not page:
+                raise RuntimeError("网络共享目录分页提前结束，停止浏览")
         self._listing_cache[cache_key] = (time.time(), children)
         return children
 
@@ -451,7 +473,8 @@ class Pioneer(Player):
                     return entry, segments
         if not entries:
             raise RuntimeError("播放机未返回任何共享，请检查 Auth 账号密码")
-        return entries[0], segments
+        raise RuntimeError(
+            f"找不到映射的网络共享: {within}，播放机共享: {[entry.get('label') for entry in entries]}")
 
     def _resolve_entry(self, server, folder, filename):
         """让播放机登录共享并浏览到目标文件，返回播放机给的条目。"""

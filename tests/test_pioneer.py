@@ -13,6 +13,7 @@ import base64
 import json
 import threading
 import unittest
+from unittest.mock import patch
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from player.pioneer import Pioneer
@@ -67,12 +68,13 @@ TREE = {
 class MockPlayer:
     """记录收到的 JSON-RPC 请求，并按 TREE 返回结果。"""
 
-    def __init__(self, reject_users=(), devices=None):
+    def __init__(self, reject_users=(), devices=None, tree=None):
         self.requests = []
         self.play_requests = []
         self.login_requests = []
         self.reject_users = set(reject_users)
         self.devices = DEVICES if devices is None else devices
+        self.tree = TREE if tree is None else tree
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), self._handler())
         self.port = self.server.server_address[1]
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
@@ -119,11 +121,13 @@ class MockPlayer:
             self.login_requests.append(params)
             if self._decode(params.get("user")) in self.reject_users:
                 return {"files": [], "limits": {"start": 0, "end": 63, "total": 0}}
-            entries = TREE.get((params.get("host"), params.get("path")), [])
+            entries = self.tree.get((params.get("host"), params.get("path")), [])
             return {"files": entries, "limits": {"start": 0, "end": 63, "total": len(entries)}}
         if method == "Browser.NetShareGetFiles":
-            entries = TREE.get((params.get("host"), params.get("path")), [])
-            return {"files": entries, "limits": {"start": 0, "end": 63, "total": len(entries)}}
+            entries = self.tree.get((params.get("host"), params.get("path")), [])
+            start, end = params["limits"]["start"], params["limits"]["end"]
+            return {"files": entries[start:end],
+                    "limits": {"start": start, "end": min(end, len(entries)), "total": len(entries)}}
         if method == "Playback.PlayFile":
             self.play_requests.append(params)
             return "0"
@@ -290,6 +294,69 @@ class PioneerMultiDirectoryTest(unittest.TestCase):
                          "/smb/NAS466C/Video/Movie/Dune2.iso")
         # 同一主机的登录与目录列表只做一次
         self.assertEqual(len(self.player_stub.login_requests), 1)
+
+    def test_target_directory_after_first_page_is_found_and_cached(self):
+        tree = dict(TREE)
+        key = ("/nfs/192.168.1.10/Series", "Series")
+        tree[key] = [entry(2, 3, i, f"Folder{i}", f"/unused/{i}", 1) for i in range(70)]
+        tree[key] += TREE[key]
+        self.player_stub.tree = tree
+        player = self.build([
+            {"Media": "/mnt/Video3", "NFS": "/192.168.1.10/Series"},
+        ])
+        self.play(player, "/mnt/Video3/S01/E01.mkv", "mkv")
+        self.assertEqual(self.messages, [])
+        self.assertEqual(self.only_play()["file"], "/nfs/192.168.1.10/Series/S01/E01.mkv")
+        requests = [r["params"]["limits"] for r in self.player_stub.requests
+                    if r["method"] == "Browser.NetShareGetFiles" and r["params"]["path"] == "Series"]
+        self.assertEqual(requests, [{"start": 0, "end": 63}, {"start": 63, "end": 126}])
+        cached = player._listing_cache[key][1]
+        self.assertEqual(len(cached), 71)
+
+    def test_missing_share_does_not_browse_an_unrelated_share(self):
+        player = self.build([
+            {"Media": "/mnt/Video", "SMB": "/NAS466C/Unknown"},
+        ], extra={"NFSPrefer": False})
+        self.play(player, "/mnt/Video/Dune.iso", "bluray")
+        self.assertEqual(self.player_stub.play_requests, [])
+        self.assertFalse(any(r["method"] == "Browser.NetShareGetFiles"
+                             for r in self.player_stub.requests))
+        self.assertIn("Unknown", self.messages[0][1])
+
+    def test_repeated_page_stops_without_caching_incomplete_results(self):
+        player = self.build([])
+        node = TREE[("192.168.1.10", "/nfs")][0]
+        page = {"files": TREE[("/nfs/192.168.1.10/Series", "Series")],
+                "limits": {"total": 10}}
+        with patch.object(player, "_rpc", return_value=page) as rpc:
+            with self.assertRaisesRegex(RuntimeError, "分页未前进"):
+                player._list_net_share(node, {})
+        self.assertEqual(rpc.call_count, 2)
+        self.assertEqual(player._listing_cache, {})
+
+    def test_empty_page_before_total_stops_without_caching(self):
+        player = self.build([])
+        node = TREE[("192.168.1.10", "/nfs")][0]
+        with patch.object(player, "_rpc", return_value={"files": [], "limits": {"total": 5}}):
+            with self.assertRaisesRegex(RuntimeError, "分页提前结束"):
+                player._list_net_share(node, {})
+        self.assertEqual(player._listing_cache, {})
+
+    def test_feiniu_nfs_export_label_with_old_mount_hint(self):
+        self.player_stub.tree = {
+            ("192.168.1.10", "/nfs"): [
+                entry(2, 3, 3, "-vol4-1000-tv", "/mnt/cifs/-vol4-1000-tv", 96),
+            ],
+            ("/mnt/cifs/-vol4-1000-tv", "-vol4-1000-tv"): [
+                entry(2, 3, 0, "E01.mkv", "/mnt/cifs/-vol4-1000-tv/E01.mkv", 8),
+            ],
+        }
+        player = self.build([
+            {"Media": "/vol4/1000/tv", "NFS": "/192.168.1.10/-vol4-1000-tv"},
+        ], extra={"ForceMountPath": "fs/1000/nfs"})
+        self.play(player, "/vol4/1000/tv/E01.mkv", "mkv")
+        self.assertEqual(self.messages, [])
+        self.assertEqual(self.only_play()["file"], "/mnt/cifs/-vol4-1000-tv/E01.mkv")
 
 
 if __name__ == "__main__":
