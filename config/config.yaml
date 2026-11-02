@@ -54,8 +54,7 @@ Player:
   Executor: player.oppo.Oppo
   # 播放机ip, 改成你自己的
   IP: 192.168.1.11
-  # SMB/NFS认证信息(按照下方格式, 建议配置至少2个不同的用户, 不用共享可以不改)
-  # oppo 与 pioneer 都会使用: 按顺序尝试, 成功后把该账号移到队尾
+  # SMB认证信息(按照下方格式，配置至少2个不同的用户, 不用smb可以不改), pioneer 不需要(由于固件限制只能在播放机上先手动进入共享目录, nfs同理)
   Auth:
     - Username: username1
       Password: password1
@@ -81,13 +80,6 @@ Player:
   StartupWait: 5
   # 指定强制挂载目录(一般可以留空或填null, 如果是飞牛等设备，必须填写nfs根目录，例如 fs/1000/nfs)
   ForceMountPath: null
-  # 以下三项只对 pioneer 生效
-  # 是否由播放机自己登录并浏览共享(支持多个共享文件夹)，false 时回到旧的单共享手动进入目录行为
-  UseNetShareLogin: true
-  # 网络共享登录/浏览的超时时间，秒
-  NetShareTimeout: 8
-  # 定位结果缓存时间，秒；期间重复播放同一影片不再重新登录和浏览
-  NetShareCache: 300
   # 文件夹映射路径(不用的协议路径值可以留空)
   # 文件最后有路径配置说明, pioneer请参照 pioneer部分
   MappingPath:

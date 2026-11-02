@@ -224,6 +224,12 @@ class FeiniuTests(unittest.TestCase):
         self.assertIs(self.media._polling_online, False)
         self.assertIsNone(self.media._records.previous)
 
+    def test_original_pioneer_uses_existing_port_probe(self):
+        self.media._player = Pioneer.__new__(Pioneer)
+        with patch.object(self.media._player, "_is_port_open", return_value=True) as probe:
+            self.assertTrue(self.media._check_player_online())
+        probe.assert_called_once_with()
+
     def test_offline_clears_baseline_and_online_does_not_replay_history(self):
         with patch.object(self.media, "_native_request", side_effect=[
             [record(ts=10)], [record(ts=500)], [record(ts=500)], [record(ts=501)],
@@ -460,7 +466,7 @@ class PlayerOnlineTests(unittest.TestCase):
     def test_pioneer_checks_live_control_port_and_closes_connection(self, connect):
         player = Pioneer.__new__(Pioneer)
         player._ip, player._port, player._online_status = "player.test", 8090, 0
-        self.assertTrue(player.is_online())
+        self.assertTrue(player._is_port_open())
         connect.assert_called_once_with(("player.test", 8090), timeout=1)
         connect.return_value.close.assert_called_once()
 
@@ -468,7 +474,7 @@ class PlayerOnlineTests(unittest.TestCase):
     def test_pioneer_does_not_trust_optimistic_cached_status(self, connect):
         player = Pioneer.__new__(Pioneer)
         player._ip, player._port, player._online_status = "player.test", 8090, 1
-        self.assertFalse(player.is_online())
+        self.assertFalse(player._is_port_open())
 
     @patch("player.oppo.socket.create_connection")
     def test_oppo_checks_control_service_without_sending_wakeup(self, connect):

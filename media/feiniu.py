@@ -323,6 +323,10 @@ class Feiniu(Media):
                 raise MediaException("Feiniu player has no online probe; configure a supported player")
             try:
                 online = probe()
+                if online is None:
+                    legacy_probe = getattr(self._player, "_is_port_open", None)
+                    if callable(legacy_probe):
+                        online = legacy_probe()
             except Exception as error:
                 logger.debug("Feiniu player online probe failed (%s)", type(error).__name__)
                 online = False
