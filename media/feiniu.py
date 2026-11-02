@@ -4,6 +4,7 @@ import hashlib
 import json
 import logging
 import math
+import re
 import secrets
 import threading
 import time
@@ -136,6 +137,11 @@ class Feiniu(Media):
         if not isinstance(excluded, list) or not all(isinstance(ext, str) for ext in excluded):
             raise MediaException("Feiniu ExcludeVideoExt must be a list of extensions")
         self._excluded = {ext.lower().lstrip(".") for ext in excluded}
+        self._share_root = config.get("ShareRoot")
+        if self._share_root is not None:
+            if (not isinstance(self._share_root, str)
+                    or not re.fullmatch(r"/vol\d+/\d+/[^/]+", self._share_root)):
+                raise MediaException("Feiniu ShareRoot must be an absolute fnOS shared folder path")
         self._records = PlaybackRecords(idle, repeat)
         self._access_token = None
         self._auth_lock = threading.Lock()
@@ -265,6 +271,11 @@ class Feiniu(Media):
                         and child.get("is_dir") is False for child in contents):
                     raise MediaException("Feiniu cannot identify the selected disc directory")
                 container = "bluray"
+        if self._share_root and not (path == self._share_root or path.startswith(self._share_root + "/")):
+            source = re.fullmatch(r"/vol\d+/(\d+)/([^/]+)(/.*)?", path)
+            if source is None or source.group(1) != self._share_root.split("/")[2]:
+                raise MediaException("Feiniu selected file is outside the configured shared folder")
+            path = self._share_root + "/" + source.group(2) + (source.group(3) or "")
         return {"Id": record["guid"], "Path": path, "Container": container,
                 "started": False}
 

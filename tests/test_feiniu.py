@@ -316,6 +316,21 @@ class FeiniuTests(unittest.TestCase):
                     self.assertRaises(MediaException):
                 self.media._resolve_item(self.row)
 
+    def test_share_root_maps_original_volume_path(self):
+        self.media._share_root = "/vol1/1000/share"
+        with patch.object(self.media, "_native_request", return_value=[
+            {"media_guid": self.row["media_guid"], "file_path": "/vol4/1000/tv/Show/Disc.iso"},
+        ]):
+            self.assertEqual(self.media._resolve_item(self.row)["Path"],
+                             "/vol1/1000/share/tv/Show/Disc.iso")
+
+    def test_share_root_rejects_unrelated_path(self):
+        self.media._share_root = "/vol1/1000/share"
+        with patch.object(self.media, "_native_request", return_value=[
+            {"media_guid": self.row["media_guid"], "file_path": "/vol4/1001/tv/Disc.iso"},
+        ]), self.assertRaisesRegex(MediaException, "outside the configured shared folder"):
+            self.media._resolve_item(self.row)
+
     def test_bdmv_entry_becomes_disc_root(self):
         for file_path in ("/disc/BDMV/index.bdmv", "/disc/BDMV/MovieObject.bdmv", "/disc/BDMV"):
             with self.subTest(file_path=file_path), patch.object(

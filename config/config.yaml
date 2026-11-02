@@ -50,6 +50,8 @@ Media:
   # OnlyWhenPlayerOnline: true
   # 播放机在线检测间隔，默认 5 秒；在线时同频率查询飞牛播放记录
   # PlayerOnlineCheckInterval: 5
+  # 飞牛若返回各卷原路径，可指定统一共享目录；投送前会转换为该目录下的同名子目录
+  # ShareRoot: /vol1/1000/share
   # 单次请求超时，默认 10 秒；等待播放机确认开始播放，默认最多 60 秒
   # RequestTimeout: 10
   # StartupTimeout: 60
@@ -106,8 +108,7 @@ Player:
   # 定位结果缓存时间，秒；期间重复播放同一影片不再重新登录和浏览
   NetShareCache: 300
   # 文件夹映射路径(不用的协议路径值可以留空)
-  # 飞牛返回 NAS 实际文件路径；Media 应填写该路径的前缀，而不是 Emby 容器路径
-  # 例如影片在 /vol4/1000/tv/剧集 中，可将 Media: /vol4/1000/tv 映射到共享中的 tv 目录
+  # 飞牛配置 ShareRoot 后，只需一条 Media: /vol1/1000/share 的映射
   # 先锋固件只能可靠使用一个共享时，先在播放机进入统一的 share 共享，再映射其子目录
   # 文件最后有路径配置说明, pioneer请参照 pioneer部分
   MappingPath:
