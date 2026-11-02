@@ -41,7 +41,9 @@ Media:
     - mkv
   # 重复检测时间, 不要改
   RepeatFilterTimeout: 120
-  # 播放机确认开始播放后，自动将影片标记为已观看；false 保留原来的观看超过70%后标记
+  # 仅 Emby 使用：true 时收到播放机“开始播放”回调后尝试标记已观看；
+  # false 时不在开始时标记。播放结束时，两种设置都会在影片时长至少 10 分钟、
+  # 且播放进度达到 70% 后尝试标记。飞牛执行器不读取此项，按开始回调自动标记。
   MarkWatchedOnStart: true
   # 飞牛专用选项：使用 media.feiniu.Feiniu 时可取消注释；Emby 忽略这些选项
   # OnlyWhenPlayerOnline: true
