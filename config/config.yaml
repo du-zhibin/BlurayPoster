@@ -13,7 +13,8 @@ LogLevel: info
 # 媒体库配置
 Media:
   # 媒体库执行器：Emby 使用 media.emby.Emby；飞牛影视使用 media.feiniu.Feiniu
-  # 飞牛配置见 feiniu.example.yaml 和 docs/feiniu.md
+  # 切换飞牛时将 Executor 改为 media.feiniu.Feiniu，Host 改为影视服务端口(通常 8005)，
+  # Username / Password 填飞牛账号，并按需调整 ExcludeVideoExt；详见 docs/feiniu.md
   Executor: media.emby.Emby
   # 设备客户端, 不要改
   Client: Emby Bluray Poster
@@ -42,6 +43,13 @@ Media:
   RepeatFilterTimeout: 120
   # 播放机确认开始播放后，自动将影片标记为已观看；false 保留原来的观看超过70%后标记
   MarkWatchedOnStart: true
+  # 飞牛专用选项：使用 media.feiniu.Feiniu 时可取消注释；Emby 忽略这些选项
+  # OnlyWhenPlayerOnline: true
+  # OfflineCheckInterval: 5
+  # PollInterval: 2
+  # RequestTimeout: 10
+  # StartupTimeout: 60
+  # ActivityIdleTimeout: 90
 
 
 # 播放器配置
@@ -84,6 +92,7 @@ Player:
   # 以下三项只对 pioneer 生效
   # 是否由播放机自己登录并浏览共享(支持多个共享文件夹)，false 时回到旧的单共享手动进入目录行为
   UseNetShareLogin: true
+  # 本机先锋固件只能使用一个共享：配置单一 share 后将上项改为 false
   # 网络共享登录/浏览的超时时间，秒
   NetShareTimeout: 8
   # 定位结果缓存时间，秒；期间重复播放同一影片不再重新登录和浏览

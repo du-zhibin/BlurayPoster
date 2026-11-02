@@ -6,8 +6,12 @@
 
 ## 配置
 
-将 `config/feiniu.example.yaml` 的 Media 段放入现有 `config.yaml`，
-填写飞牛影视账号和服务地址，并核对原有 `Player.MappingPath`。
+继续使用原来的 `config/config.yaml`，只修改其中的 `Media` 字段：
+`Executor` 改为 `media.feiniu.Feiniu`，`Host` 改为飞牛影视服务根地址，
+`Username`、`Password` 填飞牛账号，`ExcludeVideoExt` 设为 `[]` 可转发所有格式。
+`Client`、`Device`、`DeviceId`、`BlockDevices` 和 `MarkWatchedOnStart`
+属于 Emby 配置，飞牛执行器不读取它们。飞牛专用选项已在同一文件中列为注释，
+需要调整默认值时取消注释即可。并核对原有 `Player.MappingPath`。
 飞牛返回的是 NAS 实际路径，例如 `/vol4/1000/tv`；
 原来为 Emby 容器目录配置的 `/media` 映射可能需要改成这个实际路径。
 本机先锋固件不能可靠地自动切换多个共享。NAS 现已将原目录整合到
