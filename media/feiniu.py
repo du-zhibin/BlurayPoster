@@ -266,7 +266,7 @@ class Feiniu(Media):
                     raise MediaException("Feiniu cannot identify the selected disc directory")
                 container = "bluray"
         return {"Id": record["guid"], "Path": path, "Container": container,
-                "watched": bool(record.get("watched")), "started": False}
+                "started": False}
 
     def _dispatch_record(self, record):
         if not self._check_player_online():
@@ -372,16 +372,6 @@ class Feiniu(Media):
                      else min(60, self._player_online_check_interval * 2 ** min(failures, 5)))
             self._stop_event.wait(delay)
 
-    def _set_watched(self, item):
-        if item["watched"]:
-            return
-        try:
-            self._native_request("POST", _API + "/item/watched", {"item_guid": item["Id"]})
-            item["watched"] = True
-            logger.info("Feiniu marked watched, item: %s", item["Id"])
-        except MediaException as error:
-            logger.error("Feiniu could not mark watched, item: %s (%s)", item["Id"], error)
-
     def _notify_devices(self, event):
         for device in (self._tv, self._av):
             if device is not None:
@@ -399,7 +389,6 @@ class Feiniu(Media):
             if item is None or self._active is not item or item["started"]:
                 return
             item["started"] = True
-            self._set_watched(item)
             self._notify_devices("play_begin")
 
     def on_play_in_progress(self, **kwargs):
@@ -412,9 +401,6 @@ class Feiniu(Media):
             if item is None or self._active is not item:
                 return
             if item["started"]:
-                position, total = kwargs.get("position_ticks", 0), kwargs.get("total_ticks", 0)
-                if total >= 6000000000 and position >= total * 0.7:
-                    self._set_watched(item)
                 self._notify_devices("play_end")
             self._active = None
 

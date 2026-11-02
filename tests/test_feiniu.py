@@ -1,4 +1,4 @@
-"""Playback detection, selected-file routing, and watched-state feedback."""
+"""Playback detection, selected-file routing, and player callbacks."""
 
 import copy
 import threading
@@ -98,7 +98,7 @@ class FeiniuTests(unittest.TestCase):
         self.media._access_token = "test-token"
         self.row = record()
         self.item = {"Id": "movie-1", "Path": "/vol1/movies/Movie.iso",
-                     "Container": "iso", "watched": False, "started": False}
+                     "Container": "iso", "started": False}
 
     def dispatch(self):
         with patch.object(self.media, "_resolve_item", return_value=self.item):
@@ -106,29 +106,19 @@ class FeiniuTests(unittest.TestCase):
         return self.player.play.call_args.args
 
     @patch("media.feiniu.requests.request")
-    def test_watched_only_after_actual_begin_and_no_duplicate_at_end(self, request):
-        request.return_value = response({"code": 0, "data": None})
+    def test_callbacks_switch_devices_without_writing_watched(self, request):
         args = self.dispatch()
         request.assert_not_called()
         args[3]()
-        request.assert_called_once()
-        call = request.call_args
-        self.assertEqual(call.args, ("POST", "http://feiniu.test:8005/v/api/v1/item/watched"))
-        self.assertEqual(call.kwargs["data"], b'{"item_guid":"movie-1"}')
-        self.assertEqual(call.kwargs["timeout"], 10)
-        self.assertFalse(call.kwargs["allow_redirects"])
-        self.assertEqual(call.kwargs["headers"]["Authorization"], "test-token")
         self.tv.play_begin.assert_called_once()
         args[5](position_ticks=6000000000, total_ticks=7000000000)
-        request.assert_called_once()
+        request.assert_not_called()
         self.av.play_end.assert_called_once()
         self.assertIsNone(self.media._active)
 
-    def test_failed_start_end_callback_does_not_mark_or_switch_devices(self):
+    def test_failed_start_end_callback_does_not_switch_devices(self):
         args = self.dispatch()
-        with patch.object(self.media, "_set_watched") as watched:
-            args[5](position_ticks=6000000000, total_ticks=7000000000)
-        watched.assert_not_called()
+        args[5](position_ticks=6000000000, total_ticks=7000000000)
         self.tv.play_begin.assert_not_called()
         self.tv.play_end.assert_not_called()
         self.assertIsNone(self.media._active)
@@ -156,46 +146,19 @@ class FeiniuTests(unittest.TestCase):
         args = self.dispatch()
         self.item["requested_at"] = 0
         with patch("media.feiniu.time.monotonic", return_value=100), \
-                patch.object(self.media, "_native_request", return_value=[]), \
-                patch.object(self.media, "_set_watched") as watched:
+                patch.object(self.media, "_native_request", return_value=[]):
             self.media._poll_once()
             args[3]()
             args[5](position_ticks=6000000000, total_ticks=7000000000)
-        watched.assert_not_called()
         self.tv.play_begin.assert_not_called()
         self.assertIsNone(self.media._active)
 
-    def test_old_callbacks_cannot_mark_new_selection(self):
+    def test_old_callbacks_cannot_affect_new_selection(self):
         args = self.dispatch()
         self.media._active = dict(self.item, Id="movie-2")
-        with patch.object(self.media, "_set_watched") as watched:
-            args[3]()
-            args[5](position_ticks=6000000000, total_ticks=7000000000)
-        watched.assert_not_called()
-        self.assertEqual(self.media._active["Id"], "movie-2")
-
-    @patch("media.feiniu.requests.request")
-    def test_watched_failure_does_not_interrupt_device_callbacks(self, request):
-        request.return_value = response({"code": 1234})
-        args = self.dispatch()
         args[3]()
-        self.assertFalse(self.item["watched"])
-        self.tv.play_begin.assert_called_once()
-        self.assertIs(self.media._active, self.item)
-
-    def test_failed_start_mark_is_retried_at_end_threshold(self):
-        args = self.dispatch()
-        with patch.object(self.media, "_set_watched") as watched:
-            args[3]()
-            watched.assert_called_once_with(self.item)
-            args[5](position_ticks=6000000000, total_ticks=7000000000)
-            self.assertEqual(watched.call_count, 2)
-
-    @patch("media.feiniu.requests.request")
-    def test_already_watched_is_not_written_again(self, request):
-        self.item["watched"] = True
-        self.dispatch()[3]()
-        request.assert_not_called()
+        args[5](position_ticks=6000000000, total_ticks=7000000000)
+        self.assertEqual(self.media._active["Id"], "movie-2")
 
     def test_application_initializes_devices_without_a_mode_switch(self):
         settings = Mock()
@@ -465,10 +428,10 @@ class SignatureTests(unittest.TestCase):
     @patch("media.feiniu.secrets.randbelow", return_value=234567)
     @patch("media.feiniu.time.time", return_value=1700000000)
     def test_post_signs_the_exact_utf8_body_sent_to_server(self, clock, nonce):
-        headers = signed_headers("POST", "/v/api/v1/item/watched", "token",
-                                 b'{"item_guid":"movie-1"}')
+        headers = signed_headers("POST", "/v/api/v1/server/path", "token",
+                                 b'{"path":"/vol1/movies"}')
         self.assertEqual(headers["authx"],
-                         "nonce=334567&timestamp=1700000000000&sign=e13125e8645a3f3249976fe29422d1bd")
+                         "nonce=334567&timestamp=1700000000000&sign=0fad13c46cf59eeef3c21b08b40bed44")
 
 
 class PlayerOnlineTests(unittest.TestCase):
