@@ -495,10 +495,10 @@ class Pioneer(Player):
                 store.pop(stale, None)
         return node
 
-    def _play_entry(self, entry, play_type):
+    def _play_entry(self, entry, play_type, file_tab=False):
         """用播放机返回的真实路径与设备身份下发 Playback.PlayFile。"""
         entry_class = entry.get('f_class')
-        f_class = entry_class if entry_class in self.PLAYABLE_CLASSES else play_type
+        f_class = 1 if file_tab else (entry_class if entry_class in self.PLAYABLE_CLASSES else play_type)
         file_path = entry.get('file') or entry.get('path')
         request_body = {
             "method": "Playback.PlayFile",
@@ -515,7 +515,8 @@ class Pioneer(Player):
         }
         logger.debug(f"play resolved file: {request_body}")
         try:
-            res = requests.post(self._http_host, headers=self._headers, data=json.dumps(request_body),
+            res = requests.post(self._http_host, headers=self._headers,
+                                data=json.dumps(request_body, ensure_ascii=not file_tab).encode('utf-8'),
                                 timeout=self._netshare_timeout)
             if res.status_code == 200:
                 result = res.json()
@@ -527,6 +528,32 @@ class Pioneer(Player):
         except Exception as e:
             logger.error(f"play resolved file exception, error: {e}")
         return False
+
+    def _resolve_single_share_video(self, server, folder, filename):
+        """Find a file in the share already open on the player."""
+        device = self._find_device(server)
+        path = "/mnt/cifs/" + folder.strip("/")
+        expected = path.rstrip('/') + '/' + filename
+        for start in range(0, 1000, 100):
+            result = self._rpc('Browser.GetFiles', {
+                'dev_idx': device.get('dev_idx', 0),
+                'dev_type': device.get('dev_type', 0),
+                'f_class': 1,
+                'path': path,
+                'limits': {'start': start, 'end': start + 100},
+            }, timeout=max(15, self._netshare_timeout))
+            if not isinstance(result, dict):
+                raise RuntimeError("player did not return a file list")
+            entries = result.get('files') or []
+            for entry in entries:
+                if entry.get('label') == filename and entry.get('file') == expected:
+                    if entry.get('f_class') not in (1, self.VIDEO):
+                        raise RuntimeError("player returned an unexpected file class")
+                    return entry
+            total = result.get('limits', {}).get('total')
+            if not entries or not isinstance(total, int) or start + 100 >= total:
+                break
+        raise RuntimeError("video not found in player file list: " + filename)
 
     def start_before(self, **kwargs):
         """
@@ -569,6 +596,7 @@ class Pioneer(Player):
         else:
             play_type = self.BDMV
 
+        browse_video = kwargs.get('browse_video', False) and play_type == self.VIDEO
         if self._use_netshare:
             # 与 oppo 一致：按映射把文件定位到某个共享，由播放机自己登录并浏览
             try:
@@ -576,10 +604,18 @@ class Pioneer(Player):
             except Exception as e:
                 logger.error(f"resolve share failed: {e}")
                 return on_message("Error", "cannot resolve net share, {}".format(e))
-            if not self._play_entry(entry, play_type):
+            if not self._play_entry(entry, play_type, file_tab=browse_video):
                 return on_message("Error", "cannot play file, {}".format(media_path))
         else:
-            if not self._play(self._use_nfs, folder+"/"+file, play_type):
+            if browse_video:
+                try:
+                    entry = self._resolve_single_share_video(sever, folder, file)
+                except Exception as e:
+                    logger.error(f"resolve video failed: {e}")
+                    return on_message("Error", "cannot resolve video, {}".format(e))
+                if not self._play_entry(entry, play_type, file_tab=True):
+                    return on_message("Error", "cannot play file, {}".format(media_path))
+            elif not self._play(self._use_nfs, folder+"/"+file, play_type):
                 return on_message("Error", "cannot play bdmv folder, {}".format(media_path))
 
         # 开始播放并监控播放进度

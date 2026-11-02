@@ -313,6 +313,7 @@ class Feiniu(Media):
                 lambda **kw: self.on_play_begin(context=item, **kw),
                 lambda **kw: self.on_play_in_progress(context=item, **kw),
                 lambda **kw: self.on_play_end(context=item, **kw),
+                browse_video=item["Container"] != "bluray" and extension != "iso",
             )
             with self._play_lock:
                 if self._active is item and not item["started"]:

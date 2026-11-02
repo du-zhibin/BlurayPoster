@@ -105,6 +105,16 @@ class FeiniuTests(unittest.TestCase):
             self.media._dispatch_record(self.row)
         return self.player.play.call_args.args
 
+    def test_video_dispatch_requests_player_file_browse(self):
+        self.item["Path"] = "/vol1/1000/share/movie.mp4"
+        self.item["Container"] = "mp4"
+        self.dispatch()
+        self.assertTrue(self.player.play.call_args.kwargs["browse_video"])
+
+    def test_disc_dispatch_keeps_existing_playback(self):
+        self.dispatch()
+        self.assertFalse(self.player.play.call_args.kwargs["browse_video"])
+
     @patch("media.feiniu.requests.request")
     def test_callbacks_switch_devices_without_writing_watched(self, request):
         args = self.dispatch()
@@ -124,7 +134,7 @@ class FeiniuTests(unittest.TestCase):
         self.assertIsNone(self.media._active)
 
     def test_synchronous_player_error_releases_pending_item(self):
-        self.player.play.side_effect = lambda *args: args[2]("Error", "No share")
+        self.player.play.side_effect = lambda *args, **kwargs: args[2]("Error", "No share")
         self.dispatch()
         self.assertIsNone(self.media._active)
 

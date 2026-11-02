@@ -63,6 +63,17 @@ TREE = {
     ],
 }
 
+BROWSE_TREE = {
+    "/mnt/cifs/mv/04MV/PSY": [
+        entry(2, 3, 0, "PSY - Gentleman.mkv",
+              "/mnt/cifs/mv/04MV/PSY/PSY - Gentleman.mkv", 8),
+    ],
+    "/mnt/cifs/test/Trinnov Dolby Atmos Trailer": [
+        entry(2, 3, 12, "Nature -Atmos Test.mp4",
+              "/mnt/cifs/test/Trinnov Dolby Atmos Trailer/Nature -Atmos Test.mp4", 1),
+    ],
+}
+
 
 class MockPlayer:
     """记录收到的 JSON-RPC 请求，并按 TREE 返回结果。"""
@@ -127,6 +138,11 @@ class MockPlayer:
         if method == "Browser.NetShareGetFiles":
             entries = TREE.get((params.get("host"), params.get("path")), [])
             return {"files": entries, "limits": {"start": 0, "end": 63, "total": len(entries)}}
+        if method == "Browser.GetFiles":
+            entries = BROWSE_TREE.get(params.get("path"), [])
+            limits = params.get("limits") or {}
+            return {"files": entries[limits.get("start", 0):limits.get("end", 100)],
+                    "limits": {"total": len(entries)}}
         if method == "Playback.PlayFile":
             self.play_requests.append(params)
             return "0"
@@ -253,6 +269,41 @@ class PioneerMultiDirectoryTest(unittest.TestCase):
                     if body.get("method") == "Playback.PlayFile"]
         self.assertEqual(len(payloads), 1)
         self.assertIn("/mnt/cifs/tv/电影.iso".encode("utf-8"), payloads[0])
+
+    def test_feiniu_mkv_uses_file_tab_playback(self):
+        player = self.build([
+            {"Media": "/vol1/1000/share", "NFS": "/192.168.1.10", "SMB": "/NAS466C"},
+        ], extra={"UseNetShareLogin": False})
+        player.play("/vol1/1000/share/mv/04MV/PSY/PSY - Gentleman.mkv", "mkv",
+                    self.on_message, lambda **k: None, lambda **k: None,
+                    lambda **k: None, browse_video=True)
+        params = self.only_play()
+        self.assertEqual((params["dev_idx"], params["dev_type"], params["f_idx"]), (2, 3, 0))
+        self.assertEqual((params["f_class"], params["repeat"]), (1, 1))
+        self.assertEqual(params["file"], BROWSE_TREE["/mnt/cifs/mv/04MV/PSY"][0]["file"])
+        self.assertEqual(self.messages, [])
+
+    def test_feiniu_mp4_uses_player_file_index(self):
+        player = self.build([
+            {"Media": "/vol1/1000/share", "NFS": "/192.168.1.10", "SMB": "/NAS466C"},
+        ], extra={"UseNetShareLogin": False})
+        player.play("/vol1/1000/share/test/Trinnov Dolby Atmos Trailer/Nature -Atmos Test.mp4",
+                    "mp4", self.on_message, lambda **k: None, lambda **k: None,
+                    lambda **k: None, browse_video=True)
+        params = self.only_play()
+        self.assertEqual((params["dev_idx"], params["dev_type"], params["f_idx"]), (2, 3, 12))
+        self.assertEqual((params["f_class"], params["repeat"]), (1, 1))
+        self.assertEqual(self.messages, [])
+
+    def test_feiniu_missing_video_does_not_send_play(self):
+        player = self.build([
+            {"Media": "/vol1/1000/share", "NFS": "/192.168.1.10", "SMB": "/NAS466C"},
+        ], extra={"UseNetShareLogin": False})
+        player.play("/vol1/1000/share/mv/04MV/PSY/missing.mp4", "mp4",
+                    self.on_message, lambda **k: None, lambda **k: None,
+                    lambda **k: None, browse_video=True)
+        self.assertEqual(self.player_stub.play_requests, [])
+        self.assertEqual(self.messages[0][0], "Error")
 
     def test_missing_mapping_reports_error(self):
         config = {"IP": "127.0.0.1"}
