@@ -304,18 +304,27 @@ class FeiniuTests(unittest.TestCase):
 
     def test_offline_loop_uses_configured_check_interval(self):
         self.player.is_online.return_value = False
-        self.media._offline_interval = 7
-        with patch.object(self.media, "_native_request") as request, \
-                patch.object(self.media._stop_event, "wait", side_effect=lambda _: self.media.stop()) as wait:
-            self.media._poll_loop()
+        media = Feiniu(self.player, self.tv, self.av,
+                       {**self.config, "PlayerOnlineCheckInterval": 7})
+        with patch.object(media, "_native_request") as request, \
+                patch.object(media._stop_event, "wait", side_effect=lambda _: media.stop()) as wait:
+            media._poll_loop()
         request.assert_not_called()
         wait.assert_called_once_with(7)
 
-    def test_online_loop_uses_playback_poll_interval(self):
+    def test_online_loop_uses_same_configured_check_interval(self):
+        media = Feiniu(self.player, self.tv, self.av,
+                       {**self.config, "PlayerOnlineCheckInterval": 7})
+        with patch.object(media, "_native_request", return_value=[]), \
+                patch.object(media._stop_event, "wait", side_effect=lambda _: media.stop()) as wait:
+            media._poll_loop()
+        wait.assert_called_once_with(7)
+
+    def test_default_check_interval_is_five_seconds(self):
         with patch.object(self.media, "_native_request", return_value=[]), \
                 patch.object(self.media._stop_event, "wait", side_effect=lambda _: self.media.stop()) as wait:
             self.media._poll_loop()
-        wait.assert_called_once_with(2)
+        wait.assert_called_once_with(5)
 
     def test_excluded_extension_not_sent_to_player(self):
         self.media._excluded = {"mkv"}
@@ -434,8 +443,9 @@ class FeiniuTests(unittest.TestCase):
     def test_invalid_configuration_fails_early(self):
         for extra in (
             {"Host": "http://user:password@nas:8005"}, {"Host": "http://nas:5666/v"},
-            {"PollInterval": 0}, {"ActivityIdleTimeout": 1}, {"RequestTimeout": float("inf")},
-            {"OnlyWhenPlayerOnline": "false"}, {"OfflineCheckInterval": 0},
+            {"PlayerOnlineCheckInterval": 0}, {"PlayerOnlineCheckInterval": True},
+            {"ActivityIdleTimeout": 1}, {"RequestTimeout": float("inf")},
+            {"OnlyWhenPlayerOnline": "false"},
             {"ExcludeVideoExt": "mkv"}, {"Password": 1234},
         ):
             with self.subTest(extra=extra), self.assertRaises(MediaException):

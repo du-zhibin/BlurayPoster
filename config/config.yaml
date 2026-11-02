@@ -48,9 +48,8 @@ Media:
   # 飞牛专用选项：使用 media.feiniu.Feiniu 时可取消注释；Emby 忽略这些选项
   # 默认只在播放机控制端口可达时轮询影视；离线时不请求影视服务
   # OnlyWhenPlayerOnline: true
-  # 离线检查间隔，默认 5 秒；在线轮询间隔，默认 2 秒
-  # OfflineCheckInterval: 5
-  # PollInterval: 2
+  # 播放机在线检测间隔，默认 5 秒；在线时同频率查询飞牛播放记录
+  # PlayerOnlineCheckInterval: 5
   # 单次请求超时，默认 10 秒；等待播放机确认开始播放，默认最多 60 秒
   # RequestTimeout: 10
   # StartupTimeout: 60

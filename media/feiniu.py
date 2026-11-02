@@ -123,8 +123,8 @@ class Feiniu(Media):
             raise MediaException("Feiniu Username is required")
         if not isinstance(self._password, str):
             raise MediaException("Feiniu Password must be a string")
-        self._poll_interval = self._number(config, "PollInterval", 2, 0.5)
-        self._offline_interval = self._number(config, "OfflineCheckInterval", 5, 1)
+        self._player_online_check_interval = self._number(
+            config, "PlayerOnlineCheckInterval", 5, 0.5)
         self._request_timeout = self._number(config, "RequestTimeout", 10, 1)
         self._startup_timeout = self._number(config, "StartupTimeout", 60, 1)
         idle = self._number(config, "ActivityIdleTimeout", 90, 30)
@@ -368,8 +368,8 @@ class Feiniu(Media):
                 # Never log response bodies, request headers or credentials.
                 detail = str(error) if isinstance(error, MediaException) else type(error).__name__
                 logger.warning("Feiniu polling failed (%s); next success establishes a new baseline", detail)
-            delay = (self._offline_interval if self._polling_online is False
-                     else min(60, self._poll_interval * 2 ** min(failures, 5)))
+            delay = (self._player_online_check_interval if self._polling_online is False
+                     else min(60, self._player_online_check_interval * 2 ** min(failures, 5)))
             self._stop_event.wait(delay)
 
     def _set_watched(self, item):
