@@ -13,10 +13,14 @@ LogLevel: info
 # 媒体库配置
 Media:
   # 媒体库执行器：Emby 使用 media.emby.Emby；飞牛影视使用 media.feiniu.Feiniu
-  # 切换飞牛时将 Executor 改为 media.feiniu.Feiniu，Host 改为影视服务端口(通常 8005)，
-  # Username / Password 填飞牛账号，并按需调整 ExcludeVideoExt；详见 docs/feiniu.md
+  # 飞牛：将 Executor 改为 media.feiniu.Feiniu，Host 填影视服务根地址
+  # (如 http://192.168.1.10:8005)，不要填系统桌面端口 5666 或带 /v 的网页地址
+  # Username / Password 填飞牛账号；纯数字密码要加引号，确保它是 YAML 字符串
+  # 飞牛账号须能浏览影片所在目录；建议使用专用账号，避免同账号其他客户端播放触发投送
+  # 飞牛通过播放记录轮询识别选片，收藏和手动标记已观看不会触发投送
+  # 每个实例只运行一个 Media 执行器；选择飞牛后不启动 Emby 监听
   Executor: media.emby.Emby
-  # 设备客户端, 不要改
+  # Emby 设备客户端, 不要改；飞牛不读取 Client、Device、DeviceId、BlockDevices
   Client: Emby Bluray Poster
   # 媒体库服务端显示的设备名称， 不要改
   Device: Bluray Poster
@@ -34,24 +38,27 @@ Media:
   # 也可以emby里不点击播放按钮而是点击收藏/已播放按钮也可以启动影片。这样就可以不填BlockDevices，加载速度会比点击播放按钮然后阻止选片设备播放快一点
   BlockDevices:
     #- SONY XR-77A95L
-  # 排除的文件扩展名, 一行一个
+  # 排除的文件扩展名, 一行一个；飞牛设为 [] 可转发所有格式
   # 格式命中的文件会直接用点击海报的那个设备播放，不会调用蓝光机
   ExcludeVideoExt:
     - mp4
     - mkv
   # 重复检测时间, 不要改
   RepeatFilterTimeout: 120
-  # 仅 Emby 使用：true 时收到播放机“开始播放”回调后尝试标记已观看；
-  # false 时不在开始时标记。播放结束时，两种设置都会在影片时长至少 10 分钟、
-  # 且播放进度达到 70% 后尝试标记。飞牛执行器不读取此项，按开始回调自动标记。
-  MarkWatchedOnStart: true
   # 飞牛专用选项：使用 media.feiniu.Feiniu 时可取消注释；Emby 忽略这些选项
+  # 默认只在播放机控制端口可达时轮询影视；离线时不请求影视服务
   # OnlyWhenPlayerOnline: true
+  # 离线检查间隔，默认 5 秒；在线轮询间隔，默认 2 秒
   # OfflineCheckInterval: 5
   # PollInterval: 2
+  # 单次请求超时，默认 10 秒；等待播放机确认开始播放，默认最多 60 秒
   # RequestTimeout: 10
   # StartupTimeout: 60
+  # 同一影片停止更新至少 90 秒后，后续进度变化才可视为新选片
   # ActivityIdleTimeout: 90
+  # 播放机确认开始后飞牛会自动标记已观看，无需额外开关
+  # 先锋若无法报告实际播放状态，即使已开始播放也可能无法自动标记
+  # 飞牛不能阻止选片客户端继续串流；必要时在客户端手动暂停或退出
 
 
 # 播放器配置
@@ -100,6 +107,9 @@ Player:
   # 定位结果缓存时间，秒；期间重复播放同一影片不再重新登录和浏览
   NetShareCache: 300
   # 文件夹映射路径(不用的协议路径值可以留空)
+  # 飞牛返回 NAS 实际文件路径；Media 应填写该路径的前缀，而不是 Emby 容器路径
+  # 例如影片在 /vol4/1000/tv/剧集 中，可将 Media: /vol4/1000/tv 映射到共享中的 tv 目录
+  # 先锋固件只能可靠使用一个共享时，先在播放机进入统一的 share 共享，再映射其子目录
   # 文件最后有路径配置说明, pioneer请参照 pioneer部分
   MappingPath:
     - Media: /path1
