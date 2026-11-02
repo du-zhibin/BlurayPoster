@@ -6,12 +6,14 @@
 Version: "1.0.0"
 
 # 日志级别(如果发生问题搞不定的，把info改成debug然后重启，再把出问题时候的日志发上来, 问题修复后再改回info)
+# 日志文件：配置目录/logs/blurayposter.log，按天轮转并保留 7 份历史日志
 LogLevel: info
 
 
 # 媒体库配置
 Media:
-  # 引用的媒体库执行器, 不要改
+  # 媒体库执行器：Emby 使用 media.emby.Emby；飞牛影视使用 media.feiniu.Feiniu
+  # 飞牛配置见 feiniu.example.yaml 和 docs/feiniu.md
   Executor: media.emby.Emby
   # 设备客户端, 不要改
   Client: Emby Bluray Poster

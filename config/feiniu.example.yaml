@@ -1,0 +1,20 @@
+# 将此 Media 段替换到现有 config.yaml，保留并核对 Player / TV / AV 配置。
+# 本机先锋使用单一 share 根共享：在 Player 中设置 UseNetShareLogin: false，
+# 并将各 Media 实际路径映射到该共享下的对应子目录；参见 docs/feiniu.md。
+Media:
+  Executor: media.feiniu.Feiniu
+  # 飞牛影视独立服务根地址，不是 NAS 桌面 5666 端口或 /v 网页地址。
+  Host: http://192.168.1.10:8005
+  Username: your-feiniu-user
+  Password: "your-feiniu-password"
+  # 播放机控制端口可达时才查询影视记录；离线期间只检查播放机端口。
+  OnlyWhenPlayerOnline: true
+  OfflineCheckInterval: 5
+  PollInterval: 2
+  RequestTimeout: 10
+  StartupTimeout: 60
+  # 同一影片进度持续变化时只触发一次；停止变化达到此秒数后才允许重新识别。
+  ActivityIdleTimeout: 90
+  RepeatFilterTimeout: 120
+  # 默认不排除格式；需要排除时填写扩展名列表，例如 [mp4, mkv]。
+  ExcludeVideoExt: []

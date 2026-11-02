@@ -45,6 +45,13 @@ class Oppo(Player):
         except Exception as e:
             raise PlayerException(e)
 
+    def is_online(self):
+        try:
+            with socket.create_connection((self._ip, 436), timeout=1):
+                return True
+        except OSError:
+            return False
+
     def _open_oppo_http(self):
         """
         开启OPPO HTTP协议
