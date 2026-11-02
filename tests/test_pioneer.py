@@ -69,6 +69,7 @@ class MockPlayer:
 
     def __init__(self, reject_users=(), devices=None):
         self.requests = []
+        self.raw_requests = []
         self.play_requests = []
         self.login_requests = []
         self.reject_users = set(reject_users)
@@ -89,7 +90,9 @@ class MockPlayer:
 
             def do_POST(self):
                 length = int(self.headers.get("Content-Length", 0))
-                body = json.loads(self.rfile.read(length).decode("utf-8"))
+                raw = self.rfile.read(length)
+                body = json.loads(raw.decode("utf-8"))
+                outer.raw_requests.append(raw)
                 outer.requests.append(body)
                 result = outer.dispatch(body)
                 payload = json.dumps({"jsonrpc": "2.0", "id": body.get("id", "1"), "result": result})
@@ -239,6 +242,17 @@ class PioneerMultiDirectoryTest(unittest.TestCase):
 
         # 旧的单共享行为：去掉服务器名后拼 /mnt/cifs/
         self.assertEqual(self.only_play()["file"], "/mnt/cifs/Video/Movie/Dune.iso")
+
+    def test_legacy_mode_sends_chinese_path_as_utf8(self):
+        player = self.build([
+            {"Media": "/vol4/1000/tv", "SMB": "/FEINIU/share/tv",
+             "NFS": "/192.168.31.2/tv"},
+        ], extra={"UseNetShareLogin": False})
+        self.play(player, "/vol4/1000/tv/电影.iso", "bluray")
+        payloads = [raw for raw, body in zip(self.player_stub.raw_requests, self.player_stub.requests)
+                    if body.get("method") == "Playback.PlayFile"]
+        self.assertEqual(len(payloads), 1)
+        self.assertIn("/mnt/cifs/tv/电影.iso".encode("utf-8"), payloads[0])
 
     def test_missing_mapping_reports_error(self):
         config = {"IP": "127.0.0.1"}

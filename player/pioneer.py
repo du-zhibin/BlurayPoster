@@ -291,7 +291,8 @@ class Pioneer(Player):
             }
 
             # 发起 POST 请求
-            res = requests.post(url, headers=self._headers, data=json.dumps(request_body))
+            res = requests.post(url, headers=self._headers,
+                                data=json.dumps(request_body, ensure_ascii=False).encode('utf-8'))
 
             if res.status_code == 200:
                 result = res.json()
