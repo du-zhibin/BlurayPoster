@@ -112,12 +112,9 @@ Player:
   # 先锋固件只能可靠使用一个共享时，先在播放机进入统一的 share 共享，再映射其子目录
   # 文件最后有路径配置说明, pioneer请参照 pioneer部分
   MappingPath:
-    - Media: /path1
-      SMB: /smb_host1
-      NFS: /192.168.1.10/path1
-    - Media: /path2
-      SMB: /smb_host2
-      NFS: /192.168.1.10/path2
+    - Media: /vol1/1000/share
+      SMB: 
+      NFS: /192.168.1.10/share
 
 
 # 电视配置
