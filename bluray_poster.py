@@ -21,26 +21,15 @@ def setup_logging(log_level_str):
     建立日志，滚动日志，每天一个日志文件，保留最近7天
     :return:
     """
-    log_directory = os.path.join(os.getenv("CONFIG_DIR", "config"), "logs")
-    os.makedirs(log_directory, exist_ok=True)
+    log_directory = 'logs'
+    if not os.path.exists(log_directory):
+        os.makedirs(log_directory)
     logger = logging.getLogger()
     log_level = getattr(logging, log_level_str.upper(), logging.DEBUG)
     logger.setLevel(log_level)
     console_handler = logging.StreamHandler()
     console_handler.setLevel(log_level)
-    file_handler = TimedRotatingFileHandler(
-        os.path.join(log_directory, "blurayposter.log"),
-        when="midnight", interval=1, backupCount=7, encoding="utf-8",
-    )
-    file_handler.setLevel(log_level)
-    formatter = logging.Formatter(
-        "%(asctime)s %(levelname)s [%(name)s] %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
-    )
-    console_handler.setFormatter(formatter)
-    file_handler.setFormatter(formatter)
     logger.addHandler(console_handler)
-    logger.addHandler(file_handler)
 
 
 def dynamic_import(module_name, class_name):

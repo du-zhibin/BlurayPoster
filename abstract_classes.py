@@ -27,10 +27,6 @@ class Player(ABC):
     def __init__(self, config: dict):
         self._config = config
 
-    def is_online(self):
-        """Return read-only control-service reachability, or None if unsupported."""
-        return None
-
     @abstractmethod
     def start_before(self, **kwargs):
         pass
